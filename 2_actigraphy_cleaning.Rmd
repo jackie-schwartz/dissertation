@@ -263,16 +263,17 @@ d4_clean <-
     ELS_ID_chr =
       ifelse(
         str_detect(ELS_ID, "171-T3 and 109-T3") &
-          str_detect(data_start_date, "6/23/2019"),
+          str_detect(data_start_date, "6/23/19"),
         "109-T3",
         NA
         )
     ) %>%
+  relocate(ELS_ID_chr, .after = ELS_ID) %>%
   mutate(
     ELS_ID_chr =
       ifelse(
         str_detect(ELS_ID, "171-T3 and 109-T3") &
-          str_detect(data_start_date, "7/7/2019"),
+          str_detect(data_start_date, "7/7/19"),
         "171-T3",
         ELS_ID_chr
         )
