@@ -1,0 +1,118 @@
+ELS_ID,usable_MW_DailySleep,usable_Actiwatch,restingstate_timept,ICA_AHC
+sub-002,T3,T3,T3,only T3
+sub-003,NOT USABLE,T3,BOTH,only T3
+sub-005,T3,T3,T3,only T3
+sub-013,T3,NOT USABLE,T3,only T3
+sub-014,T3,T3,BOTH,only T3
+sub-015,NOT USABLE,T3,T3,only T3
+sub-020,T3,T3,BOTH,only T3
+sub-021,T3,T3,T3,only T3
+sub-022,T4,T3,T3,only T3
+sub-023,NOT USABLE,T3,T3,only T3
+sub-025,NOT USABLE,T3,T3,only T3
+sub-029,NOT USABLE,T3,T3,only T3
+sub-031,T3,T3,T3,only T3
+sub-033,T4,T3,T3,only T3
+sub-035,T4,T3,T3,only T3
+sub-036,T4,T3x,T3,only T3
+sub-038,T4,T4,T3,only T3
+sub-040,NOT USABLE,NOT USABLE,T3,only T3
+sub-042,NOT USABLE,T3,T3,only T3
+sub-043,NOT USABLE,T3,T3,only T3
+sub-046,NOT USABLE,NOT USABLE,T3,only T3
+sub-050,T3,T3,T3,only T3
+sub-055,NOT USABLE,T3,T3,only T3
+sub-056,NOT USABLE,T3,T3,only T3
+sub-058,T3,T3,BOTH,only T3
+sub-059,T3,T3,BOTH,only T3
+sub-064,NOT USABLE,T3,T3,only T3
+sub-066,NOT USABLE,T3,T3,only T3
+sub-068,NOT USABLE,T3,T3,only T3
+sub-069,T3,T3,BOTH,only T3
+sub-072,T3,T3,BOTH,only T3
+sub-074,NOT USABLE,T3,T3,only T3
+sub-075,T3,T3,BOTH,only T3
+sub-077,T3,T3,T3,only T3
+sub-079,NOT USABLE,T3,T3,only T3
+sub-081,NOT USABLE,T3,BOTH,only T3
+sub-083,NOT USABLE,T3,T3,only T3
+sub-084,T3,T3,BOTH,only T3
+sub-085,T3,T3,BOTH,only T3
+sub-088,T3,T3,BOTH,only T3
+sub-091,NOT USABLE,T3,T3,only T3
+sub-092,NOT USABLE,NOT USABLE,T3,only T3
+sub-095,T3,T3,T3,only T3
+sub-097,T3,T3,T3,only T3
+sub-100,T3,T3,T3,only T3
+sub-102,NOT USABLE,T3,T3,only T3
+sub-104,T3,T3,T3,only T3
+sub-106,NOT USABLE,T3,T3,only T3
+sub-107,T4,T3,T3,only T3
+sub-109,T3,T3,T3,only T3
+sub-110,T3,T3,T3,only T3
+sub-111,T3,T3,T3,only T3
+sub-113,T3,T3,BOTH,only T3
+sub-114,NOT USABLE,NOT USABLE,T3,only T3
+sub-120,T3,NOT USABLE,T3,only T3
+sub-123,T3,T3,T3,only T3
+sub-124,T3,T3,T3,only T3
+sub-127,T3,T3,T3,only T3
+sub-130,NOT USABLE,T3,T3,only T3
+sub-132,T3,T3,T3,only T3
+sub-134,T3,T3,T3,only T3
+sub-138,NOT USABLE,NOT USABLE,T3,only T3
+sub-139,T3,T3,T3,only T3
+sub-140,T3,T3,T3,only T3
+sub-142,T3,T3,BOTH,only T3
+sub-143,T3,T3,T3,only T3
+sub-145,T3,T3,T3,only T3
+sub-147,T3,T3,BOTH,only T3
+sub-151,T3,T3,T3,only T3
+sub-155,T3,T3,T3,only T3
+sub-156,T3,T3,T3,only T3
+sub-158,T3,T3,T3,only T3
+sub-159,T3,T3,BOTH,only T3
+sub-160,T3,T3,T3,only T3
+sub-161,T3,T3,T3,only T3
+sub-162,T3,T3,T3,only T3
+sub-164,T3,T3,T3,only T3
+sub-166,T3,T3,T3,only T3
+sub-168,NOT USABLE,T3,BOTH,only T3
+sub-169,T3,T3,BOTH,only T3
+sub-170,T3,T3,T3,only T3
+sub-171,NOT USABLE,T3,T3,only T3
+sub-173,T3,T3,T3,only T3
+sub-174,NOT USABLE,NOT USABLE,T3,only T3
+sub-175,T3,NOT USABLE,T3,only T3
+sub-176,T3,T3,T3,only T3
+sub-179,T3,T3,T3,only T3
+sub-182,T3,NOT USABLE,BOTH,only T3
+sub-184,T3,T3,T3,only T3
+sub-186,T3,T3,T3,only T3
+sub-187,T3,T3,T3,only T3
+sub-188,T3,T3,T3,only T3
+sub-191,NOT USABLE,NOT USABLE,T3,only T3
+sub-193,T3,T3,T3,only T3
+sub-194,T3,NOT USABLE,T3,only T3
+sub-199,T3,NOT USABLE,T3,only T3
+sub-201,T3,T3,T3,only T3
+sub-202,T3,T3,T3,only T3
+sub-206,T3,T3,T3,only T3
+sub-215,T3,T3,T3,only T3
+sub-307,T3,T3,T3,only T3
+sub-315,T3,T3,T3,only T3
+sub-037,T4,T4,T4,only T4
+sub-045,T4,T3,T4,only T4
+sub-047,T3,T3,T4,only T4
+sub-053,T4,T3,T4,only T4
+sub-101,T4,T4,T4,only T4
+sub-112,NOT USABLE,T4,BOTH,only T4
+sub-125,NOT USABLE,T4,BOTH,only T4
+sub-136,T3,T3,T4,only T4
+sub-152,T3,T3,T4,only T4
+sub-016,T4,T3,BOTH,use T3 for Actigraphy analysis and run again swapping T4 for MW analysis
+sub-034,T4,T3,BOTH,use T3 for Actigraphy analysis and run again swapping T4 for MW analysis
+sub-049,T4,T3,BOTH,use T3 for Actigraphy analysis and run again swapping T4 for MW analysis
+sub-065,T4,T3,BOTH,use T3 for Actigraphy analysis and run again swapping T4 for MW analysis
+sub-098,T4,T3,BOTH,use T3 for Actigraphy analysis and run again swapping T4 for MW analysis
+sub-024,T3,T4,BOTH,use T3 for MW analysis and run again swapping T4 for Actigraphy analysis

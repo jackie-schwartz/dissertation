@@ -1,0 +1,1211 @@
+---
+title: "3c_tanner_and_mw_and_act"
+author: "Jackie"
+date: "2/11/2020; revisting 7/5/20; revisiting 3/4/21; 6/15/21; 8/4/21"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+# loading libraries
+```{r, message=FALSE}
+library(lmerTest)
+library(tidyverse)
+library(foreign)
+library(haven)
+library(readxl)
+library(naniar)
+library(lubridate)
+```
+
+# reading in data
+```{r, message=FALSE}
+dem_t1_fp <-   "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/demo_clean_plus_tan_t1.csv"
+
+dem_and_tanner_mw_act_t3_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/dem_plus_tan_t3_act_mw_comb.csv"
+varscmep <- c("cmep_1.T3", "cmep_2.T3", "cmep_3.T3", "cmep_4.T3", "cmep_5.T3", "cmep_6.T3", "cmep_7.T3", "cmep_8.T3", "cmep_9.T3", "cmep_10.T3")
+cmept3_fp <- "~/Box/mooddata_nophi/ELS_RDoC/T3 DATA/ELS T3 Questionnaires/T3 Child Questionnaires/T3S1 Questionnaires/cmep.T3.csv"
+cmept3 <- 
+  read_csv(cmept3_fp) %>%
+  replace_with_na_at(., .vars = varscmep, condition = ~.x == 888) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  ) %>%
+  filter(
+    !Subject_ID_Timepoint == "196-T3"
+  )
+
+dem_and_tanner_mw_act_t4_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/dem_plus_tan_t4_act_mw_comb.csv"
+cmept4_fp <- "~/Box/mooddata_nophi/ELS_RDoC/T4 DATA/ELS T4 Questionnaires/T4 Child Questionnaires/T4S1 Questionnaires/cmep.T4.csv"
+varscmept4 <- c("cmep_1.T4", "cmep_2.T4", "cmep_3.T4", "cmep_4.T4", "cmep_5.T4", "cmep_6.T4", "cmep_7.T4", "cmep_8.T4", "cmep_9.T4", "cmep_10.T4")
+cmept4 <- 
+  read_csv(cmept4_fp) %>%
+  replace_with_na_at(., .vars = varscmept4, condition = ~.x == 888) %>%
+  mutate(
+    ELS_ID = substr(Subject_ID_Timepoint,1,3),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+  )
+
+dem_t1 <-
+  read_csv(dem_t1_fp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  )
+dem_and_tanner_mw_act_t3 <-
+  read_csv(dem_and_tanner_mw_act_t3_fp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+    ) %>%
+  dplyr::select(
+    -c(
+      duration_from_Act, 
+      duration_from_MW
+      )
+  ) %>%
+  rename(
+    ACT_session_usable.T3 = ACT_session_usable,
+    actigraphy_start_date.T3 = actigraphy_start_date,
+    MW_daily_sleep_session_usable.T3 = MW_daily_sleep_session_usable,
+    mw_start_date.T3 = mw_start_date,
+    actigraphy_or_mw.T3 = actigraphy_or_mw,
+    interval_btwn_mw_and_act.T3 = interval_btwn_mw_and_act,
+    SIMUL_AHC.T3 = SIMUL_AHC
+    ) %>%
+  left_join(
+    cmept3,
+    by = "ELS_ID"
+  )
+
+
+dem_and_tanner_mw_act_t4 <-
+  read_csv(dem_and_tanner_mw_act_t4_fp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+    ) %>%
+  dplyr::select(
+    -c(
+      duration_from_Act, 
+      duration_from_MW
+      )
+  ) %>%
+  rename(
+    ACT_session_usable.T4 = ACT_session_usable,
+    actigraphy_start_date.T4 = actigraphy_start_date,
+    MW_daily_sleep_session_usable.T4 = MW_daily_sleep_session_usable,
+    mw_start_date.T4 = mw_start_date,
+    actigraphy_or_mw.T4 = actigraphy_or_mw,
+    interval_btwn_mw_and_act.T4 = interval_btwn_mw_and_act,
+    SIMUL_AHC.T4 = SIMUL_AHC    
+    ) %>%
+  left_join(
+    cmept4,
+    by = "ELS_ID"
+  )
+
+```
+
+## checkign IDS
+```{r, checking IDs}
+ELS_ID.T3 <- unique(dem_and_tanner_mw_act_t3$ELS_ID)
+
+dem_and_tanner_mw_act_t4x <-
+  dem_and_tanner_mw_act_t4 %>%
+  mutate(
+    also_has_t3 =
+      ifelse(
+        ELS_ID %in% ELS_ID.T3,
+        1,
+        0
+        )
+    ) %>%
+  filter(
+    also_has_t3 == 1
+  ) # 13 IDs have actigraphy at T3 and MW at T4; 1 ID has MW at T3 and actigraphy at T4
+```
+
+# merging t3 and t4
+```{r}
+dem_and_tanner_mw_act_comb <-
+  full_join(
+    dem_and_tanner_mw_act_t3,
+    dem_and_tanner_mw_act_t4,
+    by = "ELS_ID"
+  ) 
+
+# creating merged t3t4 variables 
+dem_and_tanner_mw_act_comb_merge <-
+  dem_and_tanner_mw_act_comb %>%
+  mutate(
+    ACT_session_usable = NA,
+    ACT_session_usable =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+        ACT_session_usable.T3,
+        ifelse(
+          !is.na(ACT_session_usable.T4),
+          ACT_session_usable.T4,
+          ACT_session_usable
+        )
+      ),
+    MW_daily_sleep_session_usable = NA,
+    MW_daily_sleep_session_usable =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+        MW_daily_sleep_session_usable.T3,
+        ifelse(
+          !is.na(MW_daily_sleep_session_usable.T4),
+          MW_daily_sleep_session_usable.T4,
+          MW_daily_sleep_session_usable
+        )
+      ),    
+    tanner_date_for_act = NA,
+    tanner_date_for_act =
+      ifelse(
+        !is.na(tanner_date_for_act.T3),
+        as.character(tanner_date_for_act.T3),
+        ifelse(
+          !is.na(tanner_date_for_act.T4),
+          as.character(tanner_date_for_act.T4),
+          as.character(tanner_date_for_act)
+        )
+      ),      
+    tanner_date_for_mw = NA,
+    tanner_date_for_mw =
+      ifelse(
+        !is.na(tanner_date_for_mw.T3),
+        as.character(tanner_date_for_mw.T3),
+        ifelse(
+          !is.na(tanner_date_for_mw.T4),
+          as.character(tanner_date_for_mw.T4),
+          as.character(tanner_date_for_mw)
+        )
+      ),
+    tanner_date_for_mw = NA,
+    tanner_date_for_mw =
+      ifelse(
+        !is.na(tanner_date_for_mw.T3),
+        as.character(tanner_date_for_mw.T3),
+        ifelse(
+          !is.na(tanner_date_for_mw.T4),
+          as.character(tanner_date_for_mw.T4),
+          as.character(tanner_date_for_mw)
+        )
+      ),    
+    mw_start_date = NA,
+    mw_start_date =
+      ifelse(
+        !is.na(mw_start_date.T3),
+        as.character(mw_start_date.T3),
+        ifelse(
+          !is.na(mw_start_date.T4),
+          as.character(mw_start_date.T4),
+          as.character(mw_start_date)
+        )
+      ),  
+    actigraphy_start_date = NA,
+    actigraphy_start_date =
+      ifelse(
+        !is.na(actigraphy_start_date.T3),
+        as.character(actigraphy_start_date.T3),
+        ifelse(
+          !is.na(actigraphy_start_date.T4),
+          as.character(actigraphy_start_date.T4),
+          as.character(actigraphy_start_date)
+        )
+      ),  
+    days_act_to_tanner = NA,
+    days_act_to_tanner =
+      ifelse(
+        !is.na(closest_act_to_tanner.T3),
+        as.character(closest_act_to_tanner.T3),
+        ifelse(
+          !is.na(closest_act_to_tanner.T4),
+          as.character(closest_act_to_tanner.T4),
+          as.character(days_act_to_tanner)
+        )
+      ),  
+    days_mw_to_tanner = NA,
+    days_mw_to_tanner =
+      ifelse(
+        !is.na(closest_mw_to_tanner.T3),
+        as.character(closest_mw_to_tanner.T3),
+        ifelse(
+          !is.na(closest_mw_to_tanner.T4),
+          as.character(closest_mw_to_tanner.T4),
+          as.character(days_mw_to_tanner)
+        )
+      ),  
+    interval_btwn_mw_and_act = NA,
+    interval_btwn_mw_and_act =
+      ifelse(
+        !is.na(interval_btwn_mw_and_act.T3),
+        interval_btwn_mw_and_act.T3,
+        ifelse(
+          !is.na(interval_btwn_mw_and_act.T4),
+          interval_btwn_mw_and_act.T4,
+          interval_btwn_mw_and_act
+        )
+      ),
+    tanner_average_for_act = NA,
+    tanner_average_for_act =
+      ifelse(
+        !is.na(tanner_average_for_act.T3),
+        as.character(tanner_average_for_act.T3),
+        ifelse(
+          !is.na(tanner_average_for_act.T4),
+          as.character(tanner_average_for_act.T4),
+          as.character(tanner_average_for_act)
+        )
+      ),  
+    tanner_adrenal_act = NA,
+    tanner_adrenal_act =
+      ifelse(
+        !is.na(tanner_adrenal_act.T3),
+        as.character(tanner_adrenal_act.T3),
+        ifelse(
+          !is.na(tanner_adrenal_act.T4),
+          as.character(tanner_adrenal_act.T4),
+          as.character(tanner_adrenal_act)
+        )
+      ),  
+    tanner_gonadal_act = NA,
+    tanner_gonadal_act =
+      ifelse(
+        !is.na(tanner_gonadal_act.T3),
+        as.character(tanner_gonadal_act.T3),
+        ifelse(
+          !is.na(tanner_gonadal_act.T4),
+          as.character(tanner_gonadal_act.T4),
+          as.character(tanner_gonadal_act)
+        )
+      ),    
+    tanner_average_for_mw = NA,
+    tanner_average_for_mw =
+      ifelse(
+        !is.na(tanner_average_for_mw.T3),
+        as.character(tanner_average_for_mw.T3),
+        ifelse(
+          !is.na(tanner_average_for_mw.T4),
+          as.character(tanner_average_for_mw.T4),
+          as.character(tanner_average_for_mw)
+        )
+      ),  
+    tanner_adrenal_mw = NA,
+    tanner_adrenal_mw =
+      ifelse(
+        !is.na(tanner_adrenal_mw.T3),
+        as.character(tanner_adrenal_mw.T3),
+        ifelse(
+          !is.na(tanner_adrenal_mw.T4),
+          as.character(tanner_adrenal_mw.T4),
+          as.character(tanner_adrenal_mw)
+        )
+      ),  
+    tanner_gonadal_mw = NA,
+    tanner_gonadal_mw =
+      ifelse(
+        !is.na(tanner_gonadal_mw.T3),
+        as.character(tanner_gonadal_mw.T3),
+        ifelse(
+          !is.na(tanner_gonadal_mw.T4),
+          as.character(tanner_gonadal_mw.T4),
+          as.character(tanner_gonadal_mw)
+        )
+      ),    
+    tanner_age_for_act = NA,
+    tanner_age_for_act =
+      ifelse(
+        !is.na(tanner_age_for_act.T3),
+        tanner_age_for_act.T3,
+        ifelse(
+         !is.na(tanner_age_for_act.T4),
+         tanner_age_for_act.T4,
+         tanner_age_for_act
+         )
+        ),
+    tanner_age_for_mw = NA,
+    tanner_age_for_mw =
+      ifelse(
+        !is.na(tanner_age_for_mw.T3),
+        tanner_age_for_mw.T3,
+        ifelse(
+         !is.na(tanner_age_for_mw.T4),
+         tanner_age_for_mw.T4,
+         tanner_age_for_mw
+         )
+        ),
+    cmep_1_mw = NA,
+    cmep_1_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_1.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_1.T4,
+         cmep_1_mw
+       )
+      ),
+    cmep_2_mw = NA,
+    cmep_2_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_2.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_2.T4,
+         cmep_2_mw
+       )
+      ),
+    cmep_3_mw = NA,
+    cmep_3_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_3.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_3.T4,
+         cmep_3_mw
+       )
+      ),    
+    cmep_4_mw = NA,
+    cmep_4_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_4.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_4.T4,
+         cmep_4_mw
+       )
+      ),    
+    cmep_5_mw = NA,
+    cmep_5_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_5.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_5.T4,
+         cmep_5_mw
+       )
+      ), 
+    cmep_6_mw = NA,
+    cmep_6_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_6.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_6.T4,
+         cmep_6_mw
+       )
+      ),    
+    cmep_7_mw = NA,
+    cmep_7_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_7.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_7.T4,
+         cmep_7_mw
+       )
+      ),    
+    cmep_8_mw = NA,
+    cmep_8_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_8.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_8.T4,
+         cmep_8_mw
+       )
+      ),     
+    cmep_9_mw = NA,
+    cmep_9_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_9.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_9.T4,
+         cmep_9_mw
+       )
+      ),      
+    cmep_10_mw = NA,
+    cmep_10_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable.T3),
+       cmep_10.T3,
+       ifelse(
+         !is.na(MW_daily_sleep_session_usable.T4),
+         cmep_10.T4,
+         cmep_10_mw
+       )
+      ),      
+    cmep_1_act = NA,
+    cmep_1_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_1.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_1.T4,
+         cmep_1_act
+       )
+      ),
+    cmep_2_act = NA,
+    cmep_2_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_2.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_2.T4,
+         cmep_2_act
+       )
+      ),
+    cmep_3_act = NA,
+    cmep_3_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_3.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_3.T4,
+         cmep_3_act
+       )
+      ),    
+    cmep_4_act = NA,
+    cmep_4_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_4.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_4.T4,
+         cmep_4_act
+       )
+      ),    
+    cmep_5_act = NA,
+    cmep_5_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_5.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_5.T4,
+         cmep_5_act
+       )
+      ), 
+    cmep_6_act = NA,
+    cmep_6_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_6.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_6.T4,
+         cmep_6_act
+       )
+      ),    
+    cmep_7_act = NA,
+    cmep_7_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_7.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_7.T4,
+         cmep_7_act
+       )
+      ),    
+    cmep_8_act = NA,
+    cmep_8_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_8.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_8.T4,
+         cmep_8_act
+       )
+      ),     
+    cmep_9_act = NA,
+    cmep_9_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_9.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_9.T4,
+         cmep_9_act
+       )
+      ),      
+    cmep_10_act = NA,
+    cmep_10_act =
+      ifelse(
+        !is.na(ACT_session_usable.T3),
+       cmep_10.T3,
+       ifelse(
+         !is.na(ACT_session_usable.T4),
+         cmep_10.T4,
+         cmep_10_act
+       )
+      ),     
+    COVID_AHC_MW = NA,
+    COVID_AHC_MW =
+      ifelse(
+        !is.na(COVID_AHC_MW.T3),
+        COVID_AHC_MW.T3,
+        ifelse(
+         !is.na(COVID_AHC_MW.T4),
+         COVID_AHC_MW.T4,
+         COVID_AHC_MW
+         )
+        ),
+    COVID_AHC_ACT = NA,
+    COVID_AHC_ACT =
+      ifelse(
+        !is.na(COVID_AHC_ACT.T3),
+        COVID_AHC_ACT.T3,
+        ifelse(
+         !is.na(COVID_AHC_ACT.T4),
+         COVID_AHC_ACT.T4,
+         COVID_AHC_ACT
+         )
+        ),
+    Sex = NA,
+    Sex =
+      ifelse(
+        !is.na(Sex.T3),
+        Sex.T3,
+        ifelse(
+         !is.na(Sex.T4),
+         Sex.T4,
+         Sex
+         )
+        ),
+    Gender = NA,
+    Gender =
+      ifelse(
+        !is.na(Gender.T3),
+        Gender.T3,
+        ifelse(
+         !is.na(Gender.T4),
+         Gender.T4,
+         Gender
+         )
+        ),
+    BMI_MW = NA,
+    BMI_MW =
+      ifelse(
+        !is.na(BMI_mw.T3),
+        BMI_mw.T3,
+        ifelse(
+         !is.na(BMI_mw.T4),
+         BMI_mw.T4,
+         BMI_MW
+         )
+        ),
+    BMI_ACT = NA,
+    BMI_ACT =
+      ifelse(
+        !is.na(BMI_act.T3),
+        BMI_act.T3,
+        ifelse(
+         !is.na(BMI_act.T4),
+         BMI_act.T4,
+         BMI_ACT
+         )
+        ),
+    Household_Income_MW = NA,
+    Household_Income_MW =
+      ifelse(
+        !is.na(Household_Income_mw.T3),
+        Household_Income_mw.T3,
+        ifelse(
+         !is.na(Household_Income_mw.T4),
+         Household_Income_mw.T4,
+         Household_Income_MW
+         )
+        ),
+    Household_Income_ACT = NA,
+    Household_Income_ACT =
+      ifelse(
+        !is.na(Household_Income_act.T3),
+        Household_Income_act.T3,
+        ifelse(
+         !is.na(Household_Income_act.T4),
+         Household_Income_act.T4,
+         Household_Income_ACT
+         )
+        ),
+    SIMUL_AHC = NA,
+    SIMUL_AHC =
+      ifelse(
+        !is.na(SIMUL_AHC.T3),
+        SIMUL_AHC.T3,
+        ifelse(
+         !is.na(SIMUL_AHC.T4),
+         SIMUL_AHC.T4,
+         SIMUL_AHC
+         )
+        ) 
+    ) %>%
+  dplyr::select(
+    -c(ends_with(".T3"), ends_with(".T4"), ends_with(".x"), ends_with(".y")
+      )
+    )
+
+cmep_vars_to_sum_mw <- c("cmep_1_mw", "cmep_2_mw", "cmep_3_mw", "cmep_4_mw", "cmep_5_mw", "cmep_6_mw", "cmep_7_mw", "cmep_8_mw", "cmep_9_mw", "cmep_10_mw")
+cmep_vars_to_sum_act <- c("cmep_1_act", "cmep_2_act", "cmep_3_act", "cmep_4_act", "cmep_5_act", "cmep_6_act", "cmep_7_act", "cmep_8_act", "cmep_9_act", "cmep_10_act")
+dem_and_tanner_mw_act_comb_merge1 <-
+  dem_and_tanner_mw_act_comb_merge %>%
+  mutate(
+    cmep_total_mw = rowSums(dem_and_tanner_mw_act_comb_merge[,(cmep_vars_to_sum_mw)]),
+    cmep_total_act = rowSums(dem_and_tanner_mw_act_comb_merge[,(cmep_vars_to_sum_act)])
+  )
+```
+
+### joinging with previously scored adolescent perceived stress
+```{r, message=FALSE}
+asqmwfp <- 
+  "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/asqmw.csv"
+asqmw <-
+  read_csv(asqmwfp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+asqactfp <- 
+  "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/asqact.csv"
+asqact <-
+  read_csv(asqactfp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+
+dem_and_tanner_mw_act_comb_merge1 <-
+  left_join(
+    dem_and_tanner_mw_act_comb_merge1,
+    asqmw,
+    by = "ELS_ID"
+  )
+  
+dem_and_tanner_mw_act_comb_merge1 <-
+  left_join(
+    dem_and_tanner_mw_act_comb_merge1,
+    asqact,
+    by = "ELS_ID"
+  )
+```
+
+### getting rid of redundant ids
+```{r}
+dups <-
+  dem_and_tanner_mw_act_comb_merge1 %>%
+  filter(duplicated(ELS_ID)) # no redundancies
+```
+
+
+## merging with t1 race/ethnicity data
+```{r}
+dem_and_tanner_mw_act_comb_merge2 <-
+  left_join(
+    dem_and_tanner_mw_act_comb_merge1,
+    dem_t1,
+    by = "ELS_ID"
+  ) %>%
+  dplyr::select(-c(Session_Type, Date_S1.T1, Date_S2.T1))
+```
+
+## merging with els data
+```{r, message=FALSE}
+# els 
+els_sev_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/ELS_and_RSFC/els_severity_scores_20190217.xlsx"
+
+# els tk
+els_sev_tk_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/ARRR/els_severity_scores_tk.csv"
+
+els_sev <- read_excel(els_sev_fp) %>%
+  dplyr::select(ELS_ID, sumsev_type_t1) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+
+els_sev_tk <- read_csv(els_sev_tk_fp) %>%
+  dplyr::select(ELS_ID, sumsev_type_tk1) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+
+dem_and_tanner_mw_act_comb_merge3 <-
+  left_join(
+    dem_and_tanner_mw_act_comb_merge2,
+    els_sev,
+    by = "ELS_ID"
+    )
+
+dem_and_tanner_mw_act_comb_merge4 <-
+  left_join(
+    dem_and_tanner_mw_act_comb_merge3,
+    els_sev_tk,
+    by = "ELS_ID"
+    )
+
+dem_and_tanner_mw_act_comb_merge5 <-
+  dem_and_tanner_mw_act_comb_merge4 %>%
+  mutate(
+    sumsev_type =
+      ifelse(
+        is.na(sumsev_type_tk1),
+        sumsev_type_t1,
+        sumsev_type_tk1
+        )
+    ) %>%
+  dplyr::select(-sumsev_type_t1, -sumsev_type_tk1)
+```
+
+```{r}
+vars <- c("days_act_to_tanner", "days_mw_to_tanner", "interval_btwn_mw_and_act", "tanner_average_for_act", "tanner_adrenal_act", "tanner_gonadal_act", "tanner_average_for_mw", "tanner_adrenal_mw", "tanner_gonadal_mw")
+dem_and_tanner_mw_act_comb_merge6 <-
+  dem_and_tanner_mw_act_comb_merge5 %>%
+  mutate(
+    Household_Income_MW =
+      ifelse(
+        Household_Income_MW == 0 |
+          Household_Income_MW == 11,
+        NA,
+        Household_Income_MW
+        ),
+    Household_Income_ACT =
+      ifelse(
+        Household_Income_ACT == 0 |
+          Household_Income_ACT == 11,
+        NA,
+        Household_Income_ACT
+        )   
+    ) %>% # NAs mean either didn't fill out/"don't know")
+  mutate(
+    actigraphy_or_mw = NA,
+    actigraphy_or_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable) &
+          !is.na(ACT_session_usable),
+        "Both",
+        actigraphy_or_mw
+      ),
+    actigraphy_or_mw =
+      ifelse(
+        SIMUL_AHC == "yes",
+        "simultaneous ahc",
+        actigraphy_or_mw
+      ),
+    actigraphy_or_mw =
+      ifelse(
+        is.na(MW_daily_sleep_session_usable) &
+          !is.na(ACT_session_usable),
+        "Act only",
+        actigraphy_or_mw
+        ),
+    actigraphy_or_mw =
+      ifelse(
+        !is.na(MW_daily_sleep_session_usable) &
+          is.na(ACT_session_usable),
+        "MW only",
+        actigraphy_or_mw
+      ),
+    actigraphy_or_mw = factor(actigraphy_or_mw)
+  ) %>%
+  mutate(
+    nas =
+      ifelse(
+        is.na(actigraphy_or_mw),
+        "ALERT",
+        NA
+      )
+  ) %>%
+  mutate_at(
+    ., .vars = vars, .funs = as.numeric
+  ) %>%
+  mutate(
+    Child_Sex.T1 = factor(Child_Sex.T1),
+    Child_Sex.T1_rec = factor(Child_Sex.T1_rec)
+  )
+```
+
+## removing those in early puberty
+those in early puberty have a fundamentally different experience 
+```{r}
+table(dem_and_tanner_mw_act_comb_merge6$tanner_average_for_mw)
+earlytanmw <- c(2, 2, 2.5, 2.5, 2.5)
+earlytanmwout <-  which(dem_and_tanner_mw_act_comb_merge6$tanner_average_for_mw %in% c(earlytanmw))
+earlytanmwout
+dem_and_tanner_mw_act_comb_merge6[earlytanmwout, ]$ELS_ID
+# 166 188 202 216 189
+
+
+table(dem_and_tanner_mw_act_comb_merge6$tanner_average_for_act)
+earlytanact <- c(1.5, 2, 2.5, 2.5, 2.5)
+earlytanactout <-  which(dem_and_tanner_mw_act_comb_merge6$tanner_average_for_act %in% c(earlytanact))
+earlytanactout
+dem_and_tanner_mw_act_comb_merge6[earlytanactout, ]$ELS_ID
+# 87  166 188 202 216
+
+dem_and_tanner_mw_act_comb_merge7 <-
+  dem_and_tanner_mw_act_comb_merge6 %>%
+  filter(
+    !ELS_ID == "166",
+    !ELS_ID == "188",
+    !ELS_ID == "202",
+    !ELS_ID == "216",    
+    !ELS_ID == "189",
+    !ELS_ID == "87"
+    )
+```
+
+
+
+# descriptives - all
+
+```{r}
+nrow_all <-
+  dem_and_tanner_mw_act_comb_merge7 %>%
+  mutate(dulicated = duplicated(ELS_ID)) %>%
+  nrow()
+avgdaysinmonth <- 365/12
+
+desc_all <-
+  dem_and_tanner_mw_act_comb_merge7 %>%
+  group_by(actigraphy_or_mw) %>%
+  summarize(
+    n = n(),
+    n_perc = (n/nrow_all)*100,
+    interval_mw_act_mean = mean(interval_btwn_mw_and_act, na.rm = TRUE),
+    interval_mw_act_months_mean = mean(interval_btwn_mw_and_act/avgdaysinmonth, na.rm = TRUE),
+    interval_mw_act_min = min(interval_btwn_mw_and_act, na.rm = TRUE),
+    interval_mw_act_months_min = min(interval_btwn_mw_and_act/avgdaysinmonth, na.rm = TRUE),    
+    interval_mw_act_max = max(interval_btwn_mw_and_act, na.rm = TRUE),
+    interval_mw_act_months_max = max(interval_btwn_mw_and_act/avgdaysinmonth, na.rm = TRUE),    
+  )
+write_csv(desc_all, "breakdown_participation.csv")
+```    
+# all particiapnts
+
+## reading in compliance
+```{r}
+rr_df <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/MW_daily_sleep_data_reduced.csv"
+rr <-
+  read_csv(rr_df) %>%
+  dplyr::select(
+    ELS_ID, sleep_resp_rate
+  ) %>%
+  mutate(ELS_ID = factor(ELS_ID))
+
+dem_and_tanner_mw_act_comb_merge8 <-
+  left_join(
+    dem_and_tanner_mw_act_comb_merge7,
+    rr,
+    by = "ELS_ID"
+  )
+```
+
+```{r}
+desc_all_demo <-
+  dem_and_tanner_mw_act_comb_merge8 %>%
+  dplyr::select(
+    ELS_ID,
+    Sex,
+    Gender,
+    BMI_MW,
+    BMI_ACT,
+    COVID_AHC_MW,
+    COVID_AHC_ACT,
+    ACT_session_usable,
+    MW_daily_sleep_session_usable,
+    tanner_average_for_act,
+    tanner_average_for_mw,
+    tanner_age_for_act,
+    tanner_age_for_mw,
+    Household_Income_MW,
+    Household_Income_ACT,
+    SIMUL_AHC,
+    KSADS_Child_Race_by_P.T1,
+    sumsev_type,
+    asq_total_mw,
+    asq_total_act,
+    actigraphy_or_mw,
+    days_act_to_tanner,
+    days_mw_to_tanner,
+    interval_btwn_mw_and_act,
+    sleep_resp_rate
+    ) %>%
+  mutate(
+    tannermatch = 
+      ifelse(
+        actigraphy_or_mw == "simultaneous ahc" | actigraphy_or_mw == "Both",
+        tanner_average_for_mw == tanner_average_for_act,
+        NA
+      ),
+    bmimatch = 
+      ifelse(
+        actigraphy_or_mw == "simultaneous ahc" | actigraphy_or_mw == "Both",
+        BMI_MW == BMI_ACT,
+        NA
+      ),
+    hhmatch = 
+      ifelse(
+        actigraphy_or_mw == "simultaneous ahc" | actigraphy_or_mw == "Both",
+        Household_Income_MW == Household_Income_ACT,
+        NA
+      ),
+    asqmatch =
+      ifelse(
+        actigraphy_or_mw == "simultaneous ahc" | actigraphy_or_mw == "Both",
+        asq_total_mw == asq_total_act,
+        NA
+      )
+  )
+
+desc_all_demo_desc <-
+  desc_all_demo %>%
+  filter(actigraphy_or_mw == "simultaneous ahc") %>%
+  summarize(
+    n = n(),
+    tanner_mean = mean(tanner_average_for_mw),
+    tanner_sd = sd(tanner_average_for_mw),
+    tanner_min = min(tanner_average_for_mw),
+    tanner_max = max(tanner_average_for_mw),
+    tannermid = sum(tanner_average_for_mw < 4),
+    tannermidperc = (tannermid/n)*100,
+    tannerlate= sum(tanner_average_for_mw >= 4 & tanner_average_for_mw < 5),
+    tannerlateperc = (tannerlate/n)*100,
+    tannerpost = sum(tanner_average_for_mw == 5),
+    tannerpostperc = (tannerpost/n)*100,
+    age_mean = mean(tanner_age_for_mw),
+    age_sd = sd(tanner_age_for_mw),
+    age_min = min(tanner_age_for_mw),
+    age_max = max(tanner_age_for_mw),
+    BMI_mean = mean(BMI_MW, na.rm = TRUE),
+    BMI_sd = sd(BMI_MW, na.rm = TRUE),
+    BMI_min = min(BMI_MW, na.rm = TRUE),
+    BMI_max = max(BMI_MW, na.rm = TRUE),
+    household_income_mean = mean(Household_Income_MW, na.rm = TRUE),
+    household_income_sd = sd(Household_Income_MW, na.rm = TRUE),
+    household_income_min = min(Household_Income_MW, na.rm = TRUE),
+    household_income_max = max(Household_Income_MW, na.rm = TRUE),
+    days_between_tanner_and_mwstart_mean= mean(days_mw_to_tanner),
+    days_between_tanner_and_mwstart_sd = sd(days_mw_to_tanner),
+    days_between_tanner_and_mwstart_min = min(days_mw_to_tanner),
+    days_between_tanner_and_mwstart_max = max(days_mw_to_tanner),
+    sumsev_type_mean = mean(sumsev_type, na.rm = TRUE),
+    sumsev_type_sd = sd(sumsev_type, na.rm = TRUE),
+    sumsev_type_min = min(sumsev_type, na.rm = TRUE),
+    sumsev_type_max = max(sumsev_type, na.rm = TRUE),
+    asq_mean = mean(asq_total_mw, na.rm = TRUE),
+    asq_sd = sd(asq_total_mw, na.rm = TRUE),
+    asq_min = min(asq_total_mw, na.rm = TRUE),
+    asq_max = max(asq_total_mw, na.rm = TRUE),  
+    race_count_wh = sum(KSADS_Child_Race_by_P.T1 == "1"),
+    race_count_bla = sum(KSADS_Child_Race_by_P.T1 == "2"),
+    race_count_lat = sum(KSADS_Child_Race_by_P.T1 == "3"),
+    race_count_as = sum(KSADS_Child_Race_by_P.T1 == "4"),
+    race_count_bir = sum(KSADS_Child_Race_by_P.T1 == "5"),
+    race_count_oth = sum(KSADS_Child_Race_by_P.T1 == "6"),
+    race_perc_wh = (race_count_wh/n)*100,
+    race_perc_bla = (race_count_bla/n)*100,
+    race_perc_lat = (race_count_lat/n)*100,
+    race_perc_as = (race_count_as/n)*100,
+    race_perc_bir = (race_count_bir/n)*100,
+    race_perc_oth = (race_count_oth/n)*100,
+    sex_F = sum(Sex == "2"),
+    sex_perc_F = (sex_F/n)*100,
+    gender_F = sum(Gender == "2", na.rm = TRUE),
+    gender_perc_F = (gender_F/n)*100,
+    COVID_yes = sum(COVID_AHC_MW == "1"),
+    COVID_perc_yes = (COVID_yes/n)*100,
+    rr_min = min(sleep_resp_rate, na.rm = TRUE),
+    rr_max = max(sleep_resp_rate, na.rm = TRUE),
+    rr_sd = sd(sleep_resp_rate, na.rm = TRUE),
+    rr_mean = mean(sleep_resp_rate, na.rm = TRUE)
+    )
+```
+
+# ema - all
+```{r}    
+ema_desc_df <-
+  dem_and_tanner_mw_act_comb_merge8 %>%
+  filter(
+    !is.na(MW_daily_sleep_session_usable)
+  ) %>%
+  mutate(
+    dup = duplicated(ELS_ID)
+  )
+nrowema <- nrow(ema_desc_df)
+
+ema_desc <-
+  ema_desc_df %>%
+  summarize(
+    n = n(),
+    tanner_mean = mean(tanner_average_for_mw),
+    tanner_sd = sd(tanner_average_for_mw),
+    tanner_min = min(tanner_average_for_mw),
+    tanner_max = max(tanner_average_for_mw),
+    tannermid = sum(tanner_average_for_mw < 4),
+    tannermidperc = (tannermid/n)*100,
+    tannerlate= sum(tanner_average_for_mw >= 4 & tanner_average_for_mw < 5),
+    tannerlateperc = (tannerlate/n)*100,
+    tannerpost = sum(tanner_average_for_mw == 5),
+    tannerpostperc = (tannerpost/n)*100,
+    age_mean = mean(tanner_age_for_mw),
+    age_sd = sd(tanner_age_for_mw),
+    age_min = min(tanner_age_for_mw),
+    age_max = max(tanner_age_for_mw),
+    BMI_mean = mean(BMI_MW, na.rm = TRUE),
+    BMI_sd = sd(BMI_MW, na.rm = TRUE),
+    BMI_min = min(BMI_MW, na.rm = TRUE),
+    BMI_max = max(BMI_MW, na.rm = TRUE),
+    household_income_mean = mean(Household_Income_MW, na.rm = TRUE),
+    household_income_sd = sd(Household_Income_MW, na.rm = TRUE),
+    household_income_min = min(Household_Income_MW, na.rm = TRUE),
+    household_income_max = max(Household_Income_MW, na.rm = TRUE),
+    days_between_tanner_and_mwstart_mean= mean(days_mw_to_tanner),
+    days_between_tanner_and_mwstart_sd = sd(days_mw_to_tanner),
+    days_between_tanner_and_mwstart_min = min(days_mw_to_tanner),
+    days_between_tanner_and_mwstart_max = max(days_mw_to_tanner),
+    sumsev_type_mean = mean(sumsev_type, na.rm = TRUE),
+    sumsev_type_sd = sd(sumsev_type, na.rm = TRUE),
+    sumsev_type_min = min(sumsev_type, na.rm = TRUE),
+    sumsev_type_max = max(sumsev_type, na.rm = TRUE),
+    asq_mean = mean(asq_total_mw, na.rm = TRUE),
+    asq_sd = sd(asq_total_mw, na.rm = TRUE),
+    asq_min = min(asq_total_mw, na.rm = TRUE),
+    asq_max = max(asq_total_mw, na.rm = TRUE),  
+    race_count_wh = sum(KSADS_Child_Race_by_P.T1 == "1"),
+    race_count_bla = sum(KSADS_Child_Race_by_P.T1 == "2"),
+    race_count_lat = sum(KSADS_Child_Race_by_P.T1 == "3"),
+    race_count_as = sum(KSADS_Child_Race_by_P.T1 == "4"),
+    race_count_bir = sum(KSADS_Child_Race_by_P.T1 == "5"),
+    race_count_oth = sum(KSADS_Child_Race_by_P.T1 == "6"),
+    race_perc_wh = (race_count_wh/n)*100,
+    race_perc_bla = (race_count_bla/n)*100,
+    race_perc_lat = (race_count_lat/n)*100,
+    race_perc_as = (race_count_as/n)*100,
+    race_perc_bir = (race_count_bir/n)*100,
+    race_perc_oth = (race_count_oth/n)*100,
+    sex_F = sum(Sex == "2"),
+    sex_perc_F = (sex_F/n)*100,
+    gender_F = sum(Gender == "2", na.rm = TRUE),
+    gender_perc_F = (gender_F/n)*100,
+    COVID_yes = sum(COVID_AHC_MW == "1"),
+    COVID_perc_yes = (COVID_yes/n)*100,
+    rr_min = min(sleep_resp_rate, na.rm = TRUE),
+    rr_max = max(sleep_resp_rate, na.rm = TRUE),
+    rr_sd = sd(sleep_resp_rate, na.rm = TRUE),
+    rr_mean = mean(sleep_resp_rate, na.rm = TRUE)    
+    )
+
+write_csv(ema_desc, "ema_demos.csv") 
+```
+
+
+## actigraphy
+```{r}
+act_desc_df <-
+  dem_and_tanner_mw_act_comb_merge8 %>%
+  filter(
+    !is.na(ACT_session_usable)
+  ) %>%
+  mutate(
+    dup = duplicated(ELS_ID)
+  )
+nrowact <- nrow(act_desc_df)
+
+act_desc <-
+  act_desc_df %>%
+  summarize(
+    n = n(),
+    tanner_mean = mean(tanner_average_for_act),
+    tanner_sd = sd(tanner_average_for_act),
+    tanner_min = min(tanner_average_for_act),
+    tanner_max = max(tanner_average_for_act),
+    tannermid = sum(tanner_average_for_act < 4),
+    tannermidperc = (tannermid/n)*100,
+    tannerlate= sum(tanner_average_for_act >= 4 & tanner_average_for_act < 5),
+    tannerlateperc = (tannerlate/n)*100,
+    tannerpost = sum(tanner_average_for_act == 5),
+    tannerpostperc = (tannerpost/n)*100,
+    age_mean = mean(tanner_age_for_act),
+    age_sd = sd(tanner_age_for_act),
+    age_min = min(tanner_age_for_act),
+    age_max = max(tanner_age_for_act),
+    BMI_mean = mean(BMI_ACT, na.rm = TRUE),
+    BMI_sd = sd(BMI_ACT, na.rm = TRUE),
+    BMI_min = min(BMI_ACT, na.rm = TRUE),
+    BMI_max = max(BMI_ACT, na.rm = TRUE),
+    household_income_mean = mean(Household_Income_ACT, na.rm = TRUE),
+    household_income_sd = sd(Household_Income_ACT, na.rm = TRUE),
+    household_income_min = min(Household_Income_ACT, na.rm = TRUE),
+    household_income_max = max(Household_Income_ACT, na.rm = TRUE),
+    days_between_tanner_and_actstart_mean= mean(days_act_to_tanner),
+    days_between_tanner_and_actstart_sd = sd(days_act_to_tanner),
+    days_between_tanner_and_actstart_min = min(days_act_to_tanner),
+    days_between_tanner_and_actstart_max = max(days_act_to_tanner),
+    sumsev_type_mean = mean(sumsev_type, na.rm = TRUE),
+    sumsev_type_sd = sd(sumsev_type, na.rm = TRUE),
+    sumsev_type_min = min(sumsev_type, na.rm = TRUE),
+    sumsev_type_max = max(sumsev_type, na.rm = TRUE),
+    asq_mean = mean(asq_total_act, na.rm = TRUE),
+    asq_sd = sd(asq_total_act, na.rm = TRUE),
+    asq_min = min(asq_total_act, na.rm = TRUE),
+    asq_max = max(asq_total_act, na.rm = TRUE),      
+    race_count_wh = sum(KSADS_Child_Race_by_P.T1 == "1"),
+    race_count_bla = sum(KSADS_Child_Race_by_P.T1 == "2"),
+    race_count_lat = sum(KSADS_Child_Race_by_P.T1 == "3"),
+    race_count_as = sum(KSADS_Child_Race_by_P.T1 == "4"),
+    race_count_bir = sum(KSADS_Child_Race_by_P.T1 == "5"),
+    race_count_oth = sum(KSADS_Child_Race_by_P.T1 == "6"),
+    race_perc_wh = (race_count_wh/n)*100,
+    race_perc_bla = (race_count_bla/n)*100,
+    race_perc_lat = (race_count_lat/n)*100,
+    race_perc_as = (race_count_as/n)*100,
+    race_perc_bir = (race_count_bir/n)*100,
+    race_perc_oth = (race_count_oth/n)*100,
+    sex_F = sum(Sex == "2"),
+    sex_perc_F = (sex_F/n)*100,
+    gender_F = sum(Gender == "2", na.rm = TRUE),
+    gender_perc_F = (gender_F/n)*100,
+    COVID_yes = sum(COVID_AHC_ACT == "1"),
+    COVID_perc_yes = (COVID_yes/n)*100
+    )
+
+write_csv(act_desc, "act_demos.csv") 
+# __Race Coding:__  
+# _1 = white_   
+# _2 = black_  
+# _3 = latinx_  
+# _4 = asian_    
+# _5 = biracial_    
+# _6 = other_  
+```
+
+# write dataframe which has tanner, age, demo, actigraphy, and mw info
+```{r}
+# just making sure there are no redundancies
+dup <-
+  dem_and_tanner_mw_act_comb_merge8 %>%
+  filter(
+    duplicated(ELS_ID)
+  ) # none!
+
+write_csv(dem_and_tanner_mw_act_comb_merge8, "dem_and_tanner_mw_act_comb_merge.csv")
+```
+
+### for those with simulataneous components
+
+```{r}
+simdf <-
+  dem_and_tanner_mw_act_comb_merge8 %>%
+  filter(actigraphy_or_mw == "simultaneous ahc")
+write_csv(simdf, "SimultaneousAHC/dem_and_tanner_mw_act_simultaneous.csv")
+```

@@ -1,0 +1,586 @@
+---
+title: "1_mw_sleep_affect_and_pubertal_stage"
+author: "Jackie"
+date: "06/2/21; 8/4/21"
+output:
+  html_notebook
+---
+
+#Load Libraries
+```{r, message=FALSE}
+library(tidyverse)
+library(modelr)
+library(foreign)
+library(readxl)
+library(haven) 
+library(expss)
+library(chron)
+library(hms)
+library(lubridate)
+library(googlesheets4)
+library(googledrive)
+library(psych)
+```
+
+# Reading in mw, puberty, els data
+```{r filepaths}
+emasleep_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/dem_and_tanner_mw_act_comb_merge.csv"
+mw_mood_fp <- "~/Box/Mooddata_Coordinating/ELS_RDoC/At Home Components/3. MetricWire/Survey Monitoring/MW_curated_data/survey_data/daily_emotion.csv"
+```
+
+```{r, message=FALSE}
+mw_sleep <- read_csv(emasleep_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+
+mw_mood <-read_csv(mw_mood_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+```
+
+### cleaning
+```{r only child sleep}
+mw_mood_clean <-
+  mw_mood %>%
+  mutate(
+    ELS_ID =
+      str_remove_all(ELS_ID,
+                     "[c]")
+    )  %>% rename(
+    DailyEMO_sad = 
+      `Since the last prompt, please indicate the extent to which you felt sad`,
+    DailyEMO_annoyedorangry = 
+      `Since the last prompt, please indicate the extent to which you felt annoyed/angry`,
+    DailyEMO_grouchyorcranky =
+      `Since the last prompt, please indicate the extent to which you felt grouchy/cranky`,
+    DailyEMO_worried =
+      `Since the last prompt, please indicate the extent to which you felt worried`,
+    DailyEMO_anxious =
+      `Since the last prompt, please indicate the extent to which you felt anxious`,
+    DailyEMO_happy =
+      `Since the last prompt, please indicate the extent to which you felt happy`,
+    DailyEMO_cheerful =
+      `Since the last prompt, please indicate the extent to which you felt cheerful`,
+    DailyEMO_excited =
+    `Since the last prompt, please indicate the extent to which you felt excited`,
+    DailyEMO_energetic =
+      `Since the last prompt, please indicate the extent to which you felt energetic`,
+    DailyEMO_bored =
+      `Since the last prompt, please indicate the extent to which you felt bored`,
+    DailyEMO_want_other_people =
+      `Since the last prompt, please indicate the extent to which you want to be with other people`,
+    DailyEMO_want_alone =
+      `Since the last prompt, please indicate the extent to which you want to be alone`,
+    DailyEMO_who_are_you_with =
+      `Right now, who are you with?`,
+    DailyEMO_facetoface_YesorNo =
+      `Right now, are you having a face-to-face conversation?`,
+    DailyEMO_digital_convo_YesorNo =
+      `Right now, are you having a real-time digital (phone, text, Facebook, video) conversation?`
+  ) %>%
+  mutate(
+    user_id = as.factor(user_id)
+  )
+```
+
+### parsing dates
+```{r parsing dates}
+
+mw_mood_c_clean_date <-
+  mw_mood_clean %>%
+  mutate(
+    emo_trigger_date =
+      ifelse(
+        (ELS_ID == "102" &
+          is.na(emo_trigger_date)),
+        emo_survey_submit_date,
+        emo_trigger_date
+      ),
+    emo_trigger_recode = 
+      ifelse(
+        (ELS_ID == "102" & 
+          is.na(emo_trigger_recode)),
+        "Morning",
+        emo_trigger_recode
+      )
+    ) %>%
+  mutate(
+    emo_trigger_date = dmy(emo_trigger_date),
+    emo_trigger_recode = factor(emo_trigger_recode)
+  ) %>%
+  mutate(
+    neg_total =
+      dplyr::select(., 
+                    DailyEMO_sad,
+                    DailyEMO_annoyedorangry,
+                    DailyEMO_grouchyorcranky,
+                    DailyEMO_worried,
+                    DailyEMO_anxious,
+                    DailyEMO_bored,
+                    DailyEMO_want_alone) %>%
+      rowMeans(na.rm = TRUE),
+    pos_total =
+      dplyr::select(., 
+                    DailyEMO_happy,
+                    DailyEMO_cheerful,
+                    DailyEMO_excited,
+                    DailyEMO_energetic,
+                    DailyEMO_want_other_people
+                    ) %>%
+      rowMeans(na.rm = TRUE)
+  ) %>%
+  mutate(
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+  ) %>%
+  rename(
+    mw_start_date = emo_survey_start_date,
+    triggerdate = emo_trigger_date
+  ) %>%
+  mutate(
+    mw_start_date = dmy(mw_start_date)
+  )
+```
+
+## MW EMO Start Date
+```{r}
+emo_rr_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/mw_daily_emo_rr.csv"
+emo_rr <- 
+  read_csv(emo_rr_fp) %>%
+  dplyr::select(
+    ELS_ID, Identifier, Enrolled, emo_resp_rate
+  ) %>%
+  rename(User_ID = Identifier) %>%
+  mutate(
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID),
+    dup = duplicated(User_ID)
+  )  %>% # keeping ELS_ID 201 and 199 with april enrolled date
+mutate(
+    drop = 
+      ifelse(
+        ELS_ID == "201" &
+          Enrolled == "Not Enrolled",
+        "drop",
+        NA
+        )
+  ) %>%
+  filter(is.na(drop)) %>%
+  dplyr::select(ELS_ID, emo_resp_rate)
+```
+
+## reading in long format sleep data
+```{r}
+mwlongsleepfp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/1_study1/emasleeplong_2wk_final.csv"
+mwlongsleep <-
+  read_csv(mwlongsleepfp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  filter(
+    !is.na(MW_daily_sleep_session_usable)
+  )
+mwlongsleep %>%
+  distinct(ELS_ID) # 111
+mergeemosleep <-
+  left_join(
+    mw_mood_c_clean_date,
+    mwlongsleep,
+    by = c("ELS_ID", "mw_start_date")
+  ) %>%
+  group_by(ELS_ID) %>%
+  mutate(
+    rowssleep = sum(!is.na(DailySleep_satisfaction))
+      ) %>%
+  relocate(rowssleep, .after =User_ID) %>%
+  drop_na(neg_total) %>%
+  filter(rowssleep > 2)
+  
+
+mergeemosleep %>%
+  distinct(ELS_ID) # 109 had both daily sleep
+
+dmergeemosleepna <-
+  mergeemosleep %>%
+  mutate(
+    na =
+      ifelse(
+        is.na(DailyEMO_sad) |
+          is.na(DailyEMO_annoyedorangry) |
+          is.na(DailyEMO_grouchyorcranky) |
+          is.na(DailyEMO_worried) |
+          is.na(DailyEMO_anxious) |
+          is.na(DailyEMO_happy) |
+          is.na(DailyEMO_cheerful) |
+          is.na(DailyEMO_excited) |
+          is.na(DailyEMO_energetic) |
+          is.na(DailyEMO_bored) |
+          is.na(DailyEMO_want_other_people) |
+          is.na(DailyEMO_want_alone),
+        "missing",
+        "fine"
+      )
+  ) %>%
+  relocate(na, .after = ELS_ID) %>%
+  filter(na == "missing")
+write_csv(mergeemosleepna, "MISSING_EMA_ITEMS.csv")
+  
+mergeemosleep_clean <-
+  mergeemosleep %>%
+  dplyr::select(
+    ELS_ID, emo_trigger_recode, triggerdate, day, dayorder, week, starts_with("DailyEMO_"), DailySleep_hrs_rec, DailySleep_satisfaction, emo_resp_rate, sleep_resp_rate, data_num_obs
+  ) %>%
+  drop_na()
+```
+
+```{r}
+library(lavaan)
+library(semPlot)
+library(psych)
+library(GPArotation)
+vars <- c("DailyEMO_sad", "DailyEMO_annoyedorangry", "DailyEMO_grouchyorcranky", "DailyEMO_worried", "DailyEMO_anxious", "DailyEMO_bored", "DailyEMO_want_alone", "DailyEMO_happy", "DailyEMO_cheerful","DailyEMO_excited", "DailyEMO_energetic", "DailyEMO_want_other_people")
+ 
+efadata <-  mergeemosleep_clean %>% dplyr::select(ELS_ID, vars) %>% mutate(ELS_ID = factor(ELS_ID))
+efadatabasic <- efadata %>% dplyr::select(-ELS_ID)
+efadatacor <- cor(efadatabasic)
+#Factor analysis of the data
+factors_data <- fa(r = efadatacor, nfactors = 2)
+#Getting the factor loadings and model analysis
+fa.diagram(factors_data)
+
+mergeemosleep_cleanfilt <-
+  mergeemosleep_clean %>%
+  filter(
+    !ELS_ID == "057", # doesn't have tanner
+    !ELS_ID == "189", # doesn't have tanner
+  )
+# 057 069 096 097 123 180 184 189 201 (for some reason I excluded these at one point and I am lost as to why?!?!?!?!?!??!?!)
+```
+
+```{r}
+mergeemosleep_cleanfilt %>%
+  group_by(ELS_ID) %>%
+  summarise(
+    n = n()
+  )
+
+mw_mood_c_clean_date_mat <-
+  mergeemosleep_cleanfilt %>%
+  dplyr::select(
+  DailyEMO_sad,
+  DailyEMO_annoyedorangry,
+  DailyEMO_grouchyorcranky,
+  DailyEMO_worried,
+  DailyEMO_anxious,
+  DailyEMO_bored,
+  DailyEMO_want_alone,
+  DailyEMO_happy,
+  DailyEMO_cheerful,
+  DailyEMO_excited,
+  DailyEMO_energetic,
+  DailyEMO_want_other_people
+  ) %>%
+  rename(
+  sad = DailyEMO_sad,
+  annoyed.angry = DailyEMO_annoyedorangry,
+  grouchy.cranky = DailyEMO_grouchyorcranky,
+  worried = DailyEMO_worried,
+  anxious = DailyEMO_anxious,
+  bored = DailyEMO_bored,
+  want.alone = DailyEMO_want_alone,
+  happy = DailyEMO_happy,
+  cheerful = DailyEMO_cheerful,
+  excited = DailyEMO_excited,
+  energetic = DailyEMO_energetic,
+  want.others = DailyEMO_want_other_people    
+  ) %>%
+  corrr::correlate() %>%
+  corrr::shave(upper = FALSE)
+mw_mood_c_clean_date_mat
+
+mw_mood_c_clean_date_mat_long <-
+  mw_mood_c_clean_date_mat %>%
+  pivot_longer(
+    cols = -term,
+    names_to = "colname",
+    values_to = "corr"
+  ) %>%
+  mutate(
+    rowname = fct_inorder(term),
+    colname = fct_inorder(colname)
+  )
+mw_mood_c_clean_date_mat_long
+
+# plotting correlations
+corrmood <- 
+  mw_mood_c_clean_date_mat_long %>%
+  ggplot(
+    aes(
+      x = rowname,
+      y = fct_rev(colname),
+      fill = corr
+    )
+  ) +
+  geom_tile() +
+  geom_text(
+    aes(
+      label = round(corr, 2)
+      )
+    ) +
+  coord_fixed(expand = FALSE) +
+  scale_fill_distiller(
+    palette = "RdBu", 
+    na.value = "white",
+    direction = 1,
+    limits = c(-1,1)
+  ) +
+  labs(
+    x = "",
+    y = ""
+  ) +
+ theme(
+   axis.text = element_text(size = 10, angle = 30, hjust = 1)
+ )
+ggsave("corrplot_ema_mood.png")
+```
+
+
+```{r}
+mergeemosleep_cleanfilt %>%
+  distinct(ELS_ID) # 124
+
+summary(mergeemosleep_cleanfilt$emo_resp_rate) # need 9/42 0.2142857 surveys to continue
+
+mergeemosleep_cleanfilt <-
+  mergeemosleep_cleanfilt %>%
+  filter(emo_resp_rate > 0.2142857)
+mergeemosleep_cleanfilt%>%
+  distinct(ELS_ID) # 121
+```
+
+```{r}
+write_csv(mw_mood_dayorder, "MW_daily_emo_data_longform.csv")
+```
+
+### computign mean na and pa
+```{r}
+mw_affect_red <-
+  mw_mood_dayorder %>%
+  group_by(ELS_ID) %>%
+  summarise(
+    PA_mean = mean(pos_total, na.rm = TRUE),
+    NA_mean = mean(neg_total, na.rm = TRUE),
+  ) %>%
+  mutate(
+    ELS_ID = as.character(ELS_ID),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+    ) %>%
+  ungroup() # 134
+
+write_csv(mw_affect_red, "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/mw_affect_reduced.csv")
+```
+
+
+```{r}
+mw_mood_dayorder$emo_trigger_recode = factor(mw_mood_dayorder$emo_trigger_recode, levels = c("Morning", "Afternoon", "Evening"))
+mw_mood_dayorder %>%
+  ggplot(
+    aes(
+      dayorder,
+      neg_total,
+      colour=factor(week)
+      )
+    ) +
+  facet_wrap(~emo_trigger_recode) +
+  geom_line(aes(group = ELS_ID, color = emo_trigger_recode), alpha = .3) +
+  geom_smooth(method = "loess", se=FALSE, size = 1.5) +
+  theme_classic() +
+  scale_y_continuous(
+    breaks = seq(0,100,10)
+    ) +
+  # theme(
+  # strip.text.x = element_blank()
+  # ) +
+  labs(
+    x = "Day",
+    y = "Negative Emotion"
+    )
+
+
+mw_mood_dayorder %>%
+  ggplot(
+    aes(
+      dayorder,
+      pos_total,
+      colour=factor(week)
+      )
+    ) +
+  facet_wrap(~emo_trigger_recode) +
+  geom_line(aes(group = ELS_ID, color = emo_trigger_recode), alpha = .3) +
+  geom_smooth(method = "loess", se=FALSE, size = 1.5) +
+  theme_classic() +
+  scale_y_continuous(
+    breaks = seq(0,100,10)
+    ) +
+  # theme(
+  # strip.text.x = element_blank()
+  # ) +
+  labs(
+    x = "Day",
+    y = "Positive Emotion"
+    )
+```
+
+# summary 
+
+```{r summary}
+
+## how many subjects are we starting out with?
+sum_N <-
+  mw_mood_dayorder %>%
+  distinct(ELS_ID) # 127
+mw_mood_dayorder %>%
+  group_by(emo_trigger_recode) %>%
+  summarize(
+    n = n()
+  ) # response rate increases over the course of the day
+```
+
+```{r}
+mw_mood_sum_by_tod <-
+  mw_mood_dayorder %>%
+  group_by(ELS_ID, emo_trigger_recode) %>%
+  summarize(
+    pos_total_mean_by_tod = mean(pos_total),
+    neg_total_mean_by_tod = mean(neg_total),
+  ) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  ungroup()
+# is there a difference between mood by time of day
+summary(lm(neg_total_mean ~ emo_trigger_recode, data=mw_mood_sum)) # no time of day effect
+summary(lm(pos_total_mean ~ emo_trigger_recode, data=mw_mood_sum)) # sig time of day effect
+
+mw_mood_sum_by_tod_wide <-
+  mw_mood_sum_by_tod %>%
+  group_by(ELS_ID) %>%
+  gather(
+    emo_valence,
+    emo_value,
+    pos_total_mean_by_tod,
+    neg_total_mean_by_tod
+  ) %>%
+  unite(
+    "emo_tod", emo_trigger_recode, emo_valence
+  ) %>%
+  spread(emo_tod, emo_value) %>%
+  mutate(
+    ELS_ID = as.character(ELS_ID),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = as.factor(ELS_ID)
+  )
+```
+
+## merging dfs
+```{r}
+pub_mw_mood_sleep <-
+  left_join(
+    mw_sleep,
+    mw_mood_sum_by_tod_wide,
+    by = "ELS_ID"
+  ) %>%
+  mutate(ELS_ID = factor(ELS_ID),
+         Sex = factor(Sex)
+         )
+
+# recoding household income (0 is supposed to be NA)
+pub_mw_mood_sleep <-
+  pub_mw_mood_sleep %>%
+  mutate(
+    Household_Income =
+      ifelse(
+        Household_Income == 0 |
+          Household_Income == 11,
+        NA,
+        Household_Income
+        )
+    ) # NAs mean either didn't fill out/"don't know")
+```
+
+## summary
+```{r}
+pub_mw_mood_sleep_sum <-
+  pub_mw_mood_sleep %>%
+  summarize(
+    neg_emo_morning = mean(Morning_neg_total_mean_by_tod, na.rm = TRUE),
+    pos_emo_morning = mean(Morning_pos_total_mean_by_tod, na.rm = TRUE),
+    neg_emo_afternoon = mean(Afternoon_neg_total_mean_by_tod, na.rm = TRUE),
+    pos_emo_afternoon = mean(Afternoon_pos_total_mean_by_tod, na.rm = TRUE),
+    neg_emo_eve = mean(Evening_neg_total_mean_by_tod, na.rm = TRUE),
+    pos_emo_eve = mean(Evening_pos_total_mean_by_tod, na.rm = TRUE)
+  )
+```
+
+
+## centering
+I standardized tanner stage, age at tanner assessment, and bmi within each sex
+```{r}
+pub_mw_mood_sleep_cent <-
+  pub_mw_mood_sleep %>%
+  mutate(
+    Sex = factor(Sex),
+    mw_dailysleepsat_z = z_score(dailysleep_sat_mean),
+    mw_dailysleephrs_z = z_score(dailysleep_hrs_mean),
+    Morning_neg_total_mean_by_tod_z = z_score(Morning_neg_total_mean_by_tod),
+    Morning_pos_total_mean_by_tod_z = z_score(Morning_pos_total_mean_by_tod),
+    Afternoon_neg_total_mean_by_tod_z = z_score(Afternoon_neg_total_mean_by_tod),
+    Afternoon_pos_total_mean_by_tod_z = z_score(Afternoon_pos_total_mean_by_tod),
+    Evening_neg_total_mean_by_tod_z = z_score(Evening_neg_total_mean_by_tod),
+    Evening_pos_total_mean_by_tod_z = z_score(Evening_pos_total_mean_by_tod),    
+    RaceorEth = factor(KSADS_Child_Race_by_P.T1_rec)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_avg_at_mw_z = z_score(tanner_average_for_mw), # standardize within each sex
+    tanner_adrenal_mw_z = z_score(tanner_adrenal_mw),
+    tanner_gonadal_mw_z = z_score(tanner_gonadal_mw),
+    bmi_at_mw_z = z_score(BMI),
+    age_at_tanner_at_mw_z = z_score(tanner_age_for_mw)
+  ) %>%
+  ungroup()
+
+```
+
+### dist of race
+# __Race Coding:__  
+# _1 = white_   
+# _2 = black_  
+# _3 = latinx_  
+# _4 = asian_    
+# _5 = biracial_    
+# _6 = reported other than what was listed_  
+# association between mood and sleep
+```{r}
+cor.test(pub_mw_mood_sleep_cent$Morning_neg_total_mean_by_tod, pub_mw_mood_sleep_cent$Morning_pos_total_mean_by_tod)
+cor.test(pub_mw_mood_sleep_cent$Afternoon_neg_total_mean_by_tod, pub_mw_mood_sleep_cent$Afternoon_pos_total_mean_by_tod)
+cor.test(pub_mw_mood_sleep_cent$Evening_neg_total_mean_by_tod, pub_mw_mood_sleep_cent$Evening_pos_total_mean_by_tod)
+
+summary(lm(Morning_neg_total_mean_by_tod_z ~ mw_dailysleepsat_z + mw_dailysleephrs_z, data = pub_mw_mood_sleep_cent))
+summary(lm(Morning_pos_total_mean_by_tod_z ~ mw_dailysleepsat_z + mw_dailysleephrs_z, data = pub_mw_mood_sleep_cent))
+
+summary(lm(Afternoon_neg_total_mean_by_tod_z ~ mw_dailysleepsat_z + mw_dailysleephrs_z, data = pub_mw_mood_sleep_cent))
+summary(lm(Afternoon_pos_total_mean_by_tod_z ~ mw_dailysleepsat_z + mw_dailysleephrs_z, data = pub_mw_mood_sleep_cent))
+
+summary(lm(Evening_neg_total_mean_by_tod_z ~ mw_dailysleepsat_z + mw_dailysleephrs_z, data = pub_mw_mood_sleep_cent))
+summary(lm(Evening_pos_total_mean_by_tod_z ~ mw_dailysleepsat_z + mw_dailysleephrs_z, data = pub_mw_mood_sleep_cent))
+```
+
+```{r}
+library(gvlma)
+sleep_relpub_mod <- lm(mw_dailysleepsat_z ~ Morning_neg_total_mean_by_tod_z + Morning_pos_total_mean_by_tod_z + tanner_avg_at_mw_z + age_at_tanner_at_mw_z, data = pub_mw_mood_sleep_cent)
+summary(sleep_relpub_mod) # holds even with residualized rel_pub_stg
+
+summary(lm(Morning_neg_total_mean_by_tod_z ~ tanner_avg_at_mw_z + age_at_tanner_at_mw_z, data = pub_mw_mood_sleep_cent))
+summary(lm(Morning_pos_total_mean_by_tod_z ~ tanner_avg_at_mw_z + age_at_tanner_at_mw_z, data = pub_mw_mood_sleep_cent))
+
+
+```
+

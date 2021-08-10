@@ -1,5 +1,5 @@
 actigraphy_or_mw,n,n_perc,interval_mw_act_mean,interval_mw_act_months_mean,interval_mw_act_min,interval_mw_act_months_min,interval_mw_act_max,interval_mw_act_months_max
-Act only,38,24.675324675324674,NA,NA,Inf,Inf,-Inf,-Inf
-Both,19,12.337662337662337,571.9473684210526,18.803749098774333,8,0.26301369863013696,1017,33.43561643835616
-MW only,13,8.441558441558442,NA,NA,Inf,Inf,-Inf,-Inf
-simultaneous ahc,84,54.54545454545454,1.9047619047619047,0.06262230919765166,0,0,7,0.23013698630136986
+Act only,37,25,NA,NA,Inf,Inf,#NAME?,#NAME?
+Both,19,12.83783784,571.9473684,18.8037491,8,0.263013699,1017,33.43561644
+MW only,12,8.108108108,NA,NA,Inf,Inf,#NAME?,#NAME?
+simultaneous ahc,80,54.05405405,1.9,0.062465753,0,0,7,0.230136986

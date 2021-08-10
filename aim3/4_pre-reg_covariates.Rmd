@@ -1,0 +1,306 @@
+---
+title: "cdi_and_siqt3t4"
+author: "Jackie"
+date: "6/1/2021"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(naniar)
+library(cocron)
+```
+
+
+```{r}
+cdi_t3_fp <- "~/Box/mooddata_nophi/ELS_RDoC/T3 DATA/ELS T3 Questionnaires/T3 Child Questionnaires/T3S1 Questionnaires/cdi.T3.csv"
+siq_t3_fp <- "~/Box/mooddata_nophi/ELS_RDoC/T3 DATA/ELS T3 Questionnaires/T3 Child Questionnaires/T3S1 Questionnaires/siq.T3.csv"
+
+
+cdi_t4_fp <- "~/Box/mooddata_nophi/ELS_RDoC/T4 DATA/ELS T4 Questionnaires/T4 Child Questionnaires/T4S1 Questionnaires/cdi.T4.csv"
+siq_t4_fp <- "~/Box/mooddata_nophi/ELS_RDoC/T4 DATA/ELS T4 Questionnaires/T4 Child Questionnaires/T4S1 Questionnaires/siq.T4.csv"
+
+# asq already in each ICA script for actigraphy and mw
+# scan covariates in 4_sleep_and_fmri_related_covariates.Rmd
+```
+
+
+```{r, message=FALSE}
+cdi_t3 <- 
+  read_csv(cdi_t3_fp)
+siq_t3 <- 
+  read_csv(siq_t3_fp)
+
+cdi_t4 <- 
+  read_csv(cdi_t4_fp)
+siq_t4 <- 
+  read_csv(siq_t4_fp)
+```
+
+# score cdi data
+
+### filtering out duplicated IDs 
+```{r}
+keep_dates <- c("1/27/18", "6/2/18", "4/7/18", "4/8/18", "3/18/18", "4/6/18", "5/26/18", "5/24/18", "6/5/18", "7/28/20", "8/30/20", "10/8/20", "7/31/20")
+cdi_dup <- cdi_t3 %>% filter(duplicated(ELS_ID)) #  3  22  25  35  36  53  68  91  98 188 196 206 315
+cdi_dup_ids <- c("3",  "22",  "25",  "35",  "36",  "53",  "68",  "91",  "98", "188", "196", "206", "315")
+cdi_t3_clean <- 
+  cdi_t3 %>%
+  mutate(
+    keep =
+      ifelse(
+        ELS_ID %in% cdi_dup_ids &
+          cdi_date.T3 %in% keep_dates,
+        1,
+        NA
+      ),
+    keep = 
+      ifelse(
+        ELS_ID %in% cdi_dup_ids &
+          !cdi_date.T3 %in% keep_dates,
+        0,
+        keep
+        )
+    ) %>%
+  filter(
+    keep == 1 |
+      is.na(keep)
+  ) %>%
+  dplyr::select(-keep)  %>%
+  replace_with_na_all(
+    .,
+    condition = ~.x %in% c("888")
+    ) %>%
+  mutate(
+    cdi_2.T3_R = 2 - cdi_2.T3,
+    cdi_4.T3_R = 2 - cdi_4.T3,
+    cdi_5.T3_R = 2 - cdi_5.T3,
+    cdi_6.T3_R = 2 - cdi_6.T3,
+    cdi_10.T3_R = 2 - cdi_10.T3
+  )  %>%
+  dplyr::select(
+    ELS_ID, Timepoint, cdi_1.T3, cdi_2.T3_R, cdi_3.T3, cdi_4.T3_R, cdi_5.T3_R, cdi_6.T3_R, cdi_7.T3, cdi_8.T3, cdi_9.T3, cdi_10.T3_R
+    ) %>%
+  mutate(
+    cdi_total.T3 = 
+      rowSums(across(cdi_1.T3:cdi_10.T3_R))
+  ) %>%
+  drop_na(cdi_total.T3) %>%
+  rename(
+    Timepoint_cdi.T3 = Timepoint
+  )
+
+write_csv(cdi_t3_clean, "cdi_t3_clean.csv")
+# psychometrics
+cdi_t3_clean_alpha <-
+  cdi_t3_clean %>%
+  dplyr::select(cdi_1.T3, cdi_2.T3_R, cdi_3.T3, cdi_4.T3_R, cdi_5.T3_R, cdi_6.T3_R, cdi_7.T3, cdi_8.T3, cdi_9.T3, cdi_10.T3_R)
+cronbach.alpha(cdi_t3_clean_alpha, standardized = T) # 0.8500327
+```
+
+```{r}
+
+cdi_dup_t4 <- cdi_t4 %>% filter(duplicated(ELS_ID)) # 14 34
+cdi_dup_t4_ids <- c("14", "34")
+cdi_t4_clean <- 
+  cdi_t4 %>%
+  mutate(
+    keep =
+      ifelse(
+        ELS_ID %in% cdi_dup_t4_ids &
+          is.na(cdi_date.T4),
+        1,
+        NA
+      ),
+    keep = 
+      ifelse(
+        ELS_ID %in% cdi_dup_t4_ids &
+          !is.na(cdi_date.T4),
+        0,
+        keep
+        )
+    ) %>%
+  filter(
+    keep == 1 |
+      is.na(keep)
+  ) %>%
+  dplyr::select(-keep)  %>%
+  replace_with_na_all(
+    .,
+    condition = ~.x %in% c("888")
+    ) %>%
+  mutate(
+    cdi_2.T4_R = 2 - cdi_2.T4,
+    cdi_4.T4_R = 2 - cdi_4.T4,
+    cdi_5.T4_R = 2 - cdi_5.T4,
+    cdi_6.T4_R = 2 - cdi_6.T4,
+    cdi_10.T4_R = 2 - cdi_10.T4
+  )  %>%
+  dplyr::select(
+    ELS_ID, Timepoint, cdi_1.T4, cdi_2.T4_R, cdi_3.T4, cdi_4.T4_R, cdi_5.T4_R, cdi_6.T4_R, cdi_7.T4, cdi_8.T4, cdi_9.T4, cdi_10.T4_R
+    ) %>%
+  mutate(
+    cdi_total.T4 = 
+      rowSums(across(cdi_1.T4:cdi_10.T4_R))
+  ) %>%
+  drop_na(cdi_total.T4) %>%
+  rename(
+    Timepoint_cdi.T4 = Timepoint
+  )
+
+write_csv(cdi_t4_clean, "cdi_t4_clean.csv")    
+# psychometrics
+cdi_t4_clean_alpha <-
+  cdi_t4_clean %>%
+  dplyr::select(cdi_1.T4, cdi_2.T4_R, cdi_3.T4, cdi_4.T4_R, cdi_5.T4_R, cdi_6.T4_R, cdi_7.T4, cdi_8.T4, cdi_9.T4, cdi_10.T4_R)
+cronbach.alpha(cdi_t4_clean_alpha, standardized = T) # 0.791638
+```
+```{r}
+cdi_t3t4 <-
+  left_join(
+    cdi_t3_clean,
+    cdi_t4_clean,
+    by = "ELS_ID"
+  )
+
+write_csv(cdi_t3t4, "cdi_t3t4.csv")
+```
+
+
+```{r}
+siq_t3_dup <- siq_t3 %>%
+  filter(duplicated(ELS_ID)
+         ) # duplicated IDs
+dupIDs <- siq_t3_dup$ELS_ID # same as in cdi, so just keeping that code
+
+siq_t3_clean <- 
+  siq_t3 %>%
+  mutate(
+    keep =
+      ifelse(
+        ELS_ID %in% cdi_dup_ids &
+          siq_date.T3 %in% keep_dates,
+        1,
+        NA
+      ),
+    keep = 
+      ifelse(
+        ELS_ID %in% cdi_dup_ids &
+          !siq_date.T3 %in% keep_dates,
+        0,
+        keep
+        )
+    ) %>%
+  filter(
+    keep == 1 |
+      is.na(keep)
+  ) %>%
+  mutate(
+    drop = 
+      ifelse(
+        ELS_ID == "36" &
+          Session_Type == ".s",
+        "drop",
+        "keep"
+      )
+  ) %>%
+  filter(
+    drop == "keep"
+  ) %>%
+  dplyr::select(-keep)  %>%
+  replace_with_na_all(
+    .,
+    condition = ~.x %in% c("888", "999")
+    ) 
+
+vars <- c("siq_1.T3", "siq_2.T3", "siq_3.T3",  "siq_4.T3", "siq_5.T3", "siq_6.T3", "siq_7.T3", "siq_8.T3", "siq_9.T3", "siq_10.T3", "siq_11.T3", "siq_12.T3", "siq_13.T3", "siq_14.T3", "siq_15.T3")
+
+
+siq_t3_clean_total <-
+  siq_t3_clean %>%
+  mutate(
+    siq_total.T3 = 
+      rowSums(siq_t3_clean[,(which(names(siq_t3_clean)=='siq_1.T3'):which(names(siq_t3_clean)=='siq_15.T3'))])
+  ) %>%
+  drop_na(siq_total.T3) %>% 
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  dplyr::select(-Subject_ID_Timepoint, -Session_Type, -siq_date.T3, -drop) %>%
+  rename(
+    Timepoint_siq.T3 = Timepoint
+  )
+
+siq_t3_clean_alpha <-
+  siq_t3_clean_total %>%
+  dplyr::select(all_of(vars))
+
+cronbach.alpha(siq_t3_clean_alpha, standardized = T) # 0.9740673
+
+write_csv(siq_t3_clean_total, "siq_t3_clean_total.csv")
+
+```
+
+
+```{r}
+siq_t4_dup <- siq_t4 %>%
+  filter(duplicated(ELS_ID)
+         ) # duplicated IDs
+dupIDs <- siq_t4_dup$ELS_ID # same as in cdi, so just keeping that code
+
+siq_t4_clean <- 
+  siq_t4 %>%
+  mutate(
+    keep =
+      ifelse(
+        ELS_ID %in% cdi_dup_t4_ids &
+          Session_Type == ".s",
+        0,
+        NA
+        )
+    ) %>%
+  filter(
+      is.na(keep)
+  ) %>%
+  dplyr::select(-keep)  %>%
+  replace_with_na_all(
+    .,
+    condition = ~.x %in% c("888", "999")
+    ) 
+
+
+vars <- c("siq_1.T4", "siq_2.T4", "siq_3.T4",  "siq_4.T4", "siq_5.T4", "siq_6.T4", "siq_7.T4", "siq_8.T4", "siq_9.T4", "siq_10.T4", "siq_11.T4", "siq_12.T4", "siq_13.T4", "siq_14.T4", "siq_15.T4")
+
+
+siq_t4_clean_total <-
+  siq_t4_clean %>%
+  mutate(
+    siq_total.T4 = 
+      rowSums(siq_t4_clean[,(which(names(siq_t4_clean)=='siq_1.T4'):which(names(siq_t4_clean)=='siq_15.T4'))])
+  ) %>%
+  drop_na(siq_total.T4) %>% 
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  dplyr::select(-Subject_ID_Timepoint, -Session_Type, -siq_date.T4) %>%
+  rename(
+    Timepoint_siq.T4 = Timepoint
+  )
+
+siq_t4_clean_alpha <-
+  siq_t4_clean_total %>%
+  dplyr::select(all_of(vars))
+
+cronbach.alpha(siq_t4_clean_alpha, standardized = T) # 0.9577773
+
+write_csv(siq_t4_clean_total, "siq_t4_clean_total.csv")
+
+```
+
+```{r}
+siq_t3t4 <-
+  left_join(
+    siq_t3_clean_total,
+    siq_t4_clean_total,
+    by = "ELS_ID"
+  )
+
+write_csv(siq_t3t4, "siq_t3t4.csv")
+```

@@ -1,0 +1,952 @@
+---
+title: "1_act_sleep_and_pubertal_stage"
+author: "Jackie"
+date: "06/16/21; 07/06/21; 8/5/21"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+#Load Libraries
+```{r, message=FALSE}
+library(tidyverse)
+library(modelr)
+library(foreign)
+library(readxl)
+library(haven) 
+library(expss)
+library(chron)
+library(hms)
+library(lubridate)
+```
+
+# Reading in actigraphy and puberty/demo dfs
+
+```{r filepaths}
+act_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/actig_merged.csv"
+
+# full AHC sample with pubertal and demographic info
+pub_demo_act_mw_comb_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/dem_and_tanner_mw_act_comb_merge.csv"
+```
+
+```{r, message=FALSE}
+act <- read_csv(act_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+
+pub <- read_csv(pub_demo_act_mw_comb_fp) %>% # remember this dataframe is based on a bunch of scriptss that aligned the tanner and age with the AHC date (all variables - eg, Sex, BMI are based on the AHC timepoint)
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+```
+
+## filtering for actigraphy
+```{r}
+pub_filt <-
+  pub %>%
+  filter(
+    !is.na(ACT_session_usable)
+  )
+```
+
+## merging dfs
+And figuring out if any rows were duplicated by merging
+```{r}
+pub_act <-
+  left_join(
+    pub_filt,
+    act,
+    by = "ELS_ID"
+  ) %>%
+  mutate(
+    dup = duplicated(ELS_ID)
+  )
+
+ELSdup <- pub_act %>% filter(dup == TRUE)
+
+pub_act_dup <-
+  pub_act %>%
+  filter(
+    ELS_ID %in% ELSdup$ELS_ID
+  ) # those 2 ids (85,144 had redundant rows but the rows were exactly the same so just filtering for distinct ids)
+
+pub_act_final <-
+  pub_act %>%
+  distinct(
+    ELS_ID, 
+    .keep_all = TRUE
+    )
+
+write_csv(pub_act_final, "pub_act_merged.csv")
+```
+
+### functions
+```{r}
+getmode <- function(v, na.rm=TRUE) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+```
+
+### cronbach's alpha
+```{r}
+library(ltm)
+cmep_cron <-
+  pub_act_final %>%
+  dplyr::select(
+    starts_with("cmep") &
+      ends_with("act"),
+    -cmep_total_act
+  ) %>%
+  drop_na()
+cronbach.alpha(cmep_cron) # 0.838
+
+```
+
+## Data Viz
+
+### distribution of sleep measures
+```{r}
+dailysleep_eff_act <- 
+  pub_act_final %>%
+  ggplot(
+    aes(x = eff_perc_mean)
+  ) +
+  geom_histogram(color = "black", alpha = .5, bins =15) +
+  theme_classic() +
+  labs(
+    x = "Averaged Daily Objective Sleep Efficiency",
+    title = "Distribution of Averaged Daily Sleep Efficiency"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  )
+dailysleep_eff_act
+
+
+dailysleep_hrs_act <- 
+  pub_act_final %>%
+  ggplot(
+    aes(x = sleep_time_hrs_mean)
+  ) +
+  geom_histogram(color = "black", alpha = .5, bins =15) +
+  theme_classic() +
+  labs(
+    x = "Averaged Daily Objective Sleep Duration (hrs)",
+    title = "Distribution of Averaged Daily Sleep Duration"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  )
+dailysleep_hrs_act
+
+
+cmep_act <- 
+  pub_act_final %>%
+  ggplot(
+    aes(x = cmep_total_act)
+  ) +
+  geom_histogram(color = "black", alpha = .5, bins =15) +
+  theme_classic() +
+  labs(
+    x = "Morningness",
+    title = "Distribution of Circadian Preference"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  )
+cmep_act
+
+dailysleep_summary <-
+  pub_act_final %>%
+  summarize(
+    dailysleep_eff_average = mean(eff_perc_mean),
+    dailysleep_eff_disp = sd(eff_perc_mean),
+    dailysleep_eff_min = min(eff_perc_mean),
+    dailysleep_eff_max = max(eff_perc_mean),
+    dailysleep_hrs_average = mean(sleep_time_hrs_mean),
+    dailysleep_hrs_disp = sd(sleep_time_hrs_mean),
+    dailysleep_hrs_min = min(sleep_time_hrs_mean),
+    dailysleep_hrs_max = max(sleep_time_hrs_mean),
+    cmep_average = mean(cmep_total_act, na.rm = TRUE),
+    cmep_disp = sd(cmep_total_act, na.rm = TRUE),
+    cmep_min = min(cmep_total_act, na.rm = TRUE),
+    cmep_max = max(cmep_total_act, na.rm = TRUE)
+  )
+dailysleep_summary
+getmode(pub_act_final$eff_perc_mean) #  80.63
+median(pub_act_final$eff_perc_mean) # 82.28126
+getmode(pub_act_final$sleep_time_hrs_mean) # 7
+median(pub_act_final$sleep_time_hrs_mean) # 6.862554
+pub_act_finalcmep <-
+  pub_act_final %>%
+  drop_na(cmep_total_act)
+getmode(pub_act_finalcmep$cmep_total_act) # 23
+median(pub_act_finalcmep$cmep_total_act) # 26.5
+```
+
+```{r, message=FALSE}
+library(gridExtra)
+library(cowplot)
+actsleep <- 
+  cowplot::plot_grid(
+    dailysleep_eff_act, 
+    dailysleep_hrs_act,
+    cmep_act,
+    labels = c('D', 'E', 'F'), 
+    label_size = 10
+    )
+ggsave("averaged_daily_sleep_act.png", actsleep, width = 8, height = 6)
+```
+
+
+### distribution of most recent tanner score
+```{r}
+tanner_act <- 
+  pub_act_final %>%
+  ggplot(
+    aes(x = tanner_average_for_act)
+  ) +
+  geom_histogram(color = "black", alpha = .5) +
+  theme_classic() +
+  labs(
+    x = "Tanner Stage",
+    title = "Distribution of Tanner Stage closest to Actiwatch"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  ) 
+tanner_act
+
+```
+
+### distribution of most recent age
+```{r}
+age_act <- 
+  pub_act_final %>%
+  ggplot(
+    aes(x = tanner_age_for_act)
+  ) +
+  geom_histogram(color = "black", alpha = .5, bins =21) +
+  theme_classic() +
+  labs(
+    x = "Age",
+    title = "Distribution of Age closest to Actiwatch"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  ) +
+  scale_x_continuous(
+    name = "Age",
+    limits = c(13, 21),                    
+    breaks = seq(13, 21, 1)
+    ) +
+  scale_y_continuous(
+    name = "count",
+    limits = c(0, 22, 2)
+  ) 
+age_act
+
+```
+
+## pubertal stage relative to age
+within each sex: modeling pubertal stage on age, extracting residuals to get a relative pub stage score
+```{r}
+rel_pub_mod <- lm(scale(tanner_average_for_act) ~ scale(tanner_age_for_act), data = pub_act_final)
+summary(rel_pub_mod)
+pub_act_final <-
+  pub_act_final %>% 
+  add_residuals(rel_pub_mod, var = "rel_pub_stg")
+
+relpub_act <- 
+  pub_act_final %>%
+  ggplot(
+    aes(x = rel_pub_stg)
+  ) +
+  geom_histogram(color = "black", alpha = .5) +
+  theme_classic() +
+  labs(
+    x = "Pubertal Stage Relative to Age",
+    title = "Distribution of Relative Pubertal Stage"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  )
+relpub_act
+```
+
+```{r}
+actsleep_pub <- 
+  cowplot::plot_grid(
+    tanner_act, 
+    age_act, 
+    relpub_act,
+    labels = c('D', 'E', 'F'), 
+    label_size = 10
+    )
+ggsave("age_and_tanner_Act_dist.png", actsleep_pub, width = 9, height = 6)
+```
+
+```{r}
+options(scipen = 999)
+```
+
+## outliers - sleep efficiency
+```{r}
+# outliers: outside 1.5 times the interquartile range above the upper quartile and below the lower quartile (Q1 - 1.5 * IQR or Q3 + 1.5 * IQR).
+boxplot.stats(pub_act_final$eff_perc_mean)$out # 4 outliers
+out <- boxplot.stats(pub_act_final$eff_perc_mean)$out
+out_ind <- which(pub_act_final$eff_perc_mean %in% c(out))
+out_ind
+temp_df <- pub_act_final[out_ind, ]
+
+pub_act_final_rem <- 
+  pub_act_final %>%
+  filter(
+    ELS_ID != "29",
+    ELS_ID != "98",    
+    ELS_ID != "130",
+    ELS_ID != "143"  
+    )
+
+```
+
+## centering based on this sample
+I standardized tanner stage, age at tanner assessment, and bmi within each sex
+```{r}
+pub_act_final_rem_cent <-
+  pub_act_final_rem %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_ACT = factor(COVID_AHC_ACT),
+    act_dailysleep_eff_z = scale(eff_perc_mean),
+    act_dailysleephrs_z = scale(sleep_time_hrs_mean),
+    sumsev_type_z = scale(sumsev_type),
+    household_income_act = scale(Household_Income_ACT)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_avg_at_act_z = scale(tanner_average_for_act), # standardize within each sex
+    tanner_adrenal_act_z = scale(tanner_adrenal_act),
+    tanner_gonadal_act_z = scale(tanner_gonadal_act),
+    bmi_at_act_z = scale(BMI_ACT),
+    age_at_tanner_at_act_z = scale(tanner_age_for_act)
+  ) %>%
+  ungroup()
+```
+
+## computing relative pubertal stage
+
+```{r}
+rel_pub_mod <- lm(tanner_avg_at_act_z ~ age_at_tanner_at_act_z, data = pub_act_final_rem_cent)
+summary(rel_pub_mod)
+pub_act_final_rem_cent <-
+  pub_act_final_rem_cent %>% 
+  add_residuals(rel_pub_mod, var = "rel_pub_stg_eff")
+```
+
+# associations with efficiency
+
+
+### correlations with possible covariates
+```{r}
+cor.test(pub_act_final_rem_cent$act_dailysleep_eff_z, pub_act_final_rem_cent$bmi_at_act_z) # not sig
+# r=0.03477699, p=0.7002
+cor.test(pub_act_final_rem_cent$act_dailysleep_eff_z, pub_act_final_rem_cent$household_income_act) # not sig
+# r=-0.006495937, p=0.9432
+cor.test(pub_act_final_rem_cent$act_dailysleep_eff_z, pub_act_final_rem_cent$sumsev_type_z) # not sig
+# r=-0.03268759, p=0.7109
+summary(lm(act_dailysleep_eff_z ~ Sex, data = pub_act_final_rem_cent)) # not sig
+# B=0.2154, p=0.233 
+summary(lm(act_dailysleep_eff_z ~ COVID_AHC_ACT, data = pub_act_final_rem_cent)) # not sig
+# B=0.07240, p=0.729
+
+```
+
+## extra libraries
+```{r, message=FALSE}
+library(gvlma)
+library(car)
+library(BayesFactor)
+library(bayestestR)
+library(sjPlot)
+options(scipen = 999)
+```
+
+# Tanner Average and Sleep Efficiency Association
+
+## association between relative pubertal stage score and sleep eff
+```{r}
+relpub <- lm(act_dailysleep_eff_z ~ rel_pub_stg_eff, data = pub_act_final_rem_cent)
+summary(gvlma(relpub)) # acceptable
+summary(relpub)
+# (B=0.21902, p=0.0179)
+
+# CI
+ci_relpub = Boot(relpub, coef,
+method='case', R=1000)
+boot_confint_relpub <- confint(ci_relpub, type='norm')
+# rel_pub_stg_eff  0.049631 0.38740
+
+# Bayes Factor
+bayes_relpub <- regressionBF(
+  formula = act_dailysleep_eff_z ~ rel_pub_stg_eff, data = pub_act_final_rem_cent
+) # 2.469
+
+# separating out tanner and age
+pubmodeff <- lm(act_dailysleep_eff_z ~ tanner_avg_at_act_z + age_at_tanner_at_act_z, data = pub_act_final_rem_cent)
+summary(gvlma(pubmodeff))
+summary(pubmodeff)
+# tanner_avg_at_act_z B=0.219023, p=0.0183
+# age_at_tanner_at_act_z B=-0.037730, p=0.6812
+
+# CI
+ci_relpub = Boot(pubmodeff, coef,
+method='case', R=1000)
+boot_confint_relpub <- confint(ci_relpub, type='norm')
+# tanner_avg_at_act_z     0.049342 0.39128
+# age_at_tanner_at_act_z -0.194986 0.12349
+
+# Bayes Factor
+bayes_relpub <- regressionBF(
+  formula = act_dailysleep_eff_z ~ tanner_avg_at_act_z + age_at_tanner_at_act_z, data = pub_act_final_rem_cent
+)
+# [1] tanner_avg_at_act_z                          : 2.462571  ±0%
+# [2] age_at_tanner_at_act_z                       : 0.2001368 ±0%
+# [3] tanner_avg_at_act_z + age_at_tanner_at_act_z : 0.6711083 ±0.01%
+
+# adrenal vs. gonadal
+pubmodad <- lm(act_dailysleep_eff_z ~ tanner_adrenal_act_z, data = pub_act_final_rem_cent)
+summary(gvlma(pubmodad))
+summary(pubmodad)
+ci_pubmodad = Boot(pubmodad, coef,
+method='case', R=1000)
+boot_confint_relpub <- confint(ci_pubmodad, type='norm') # tanner_adrenal_act_z  0.0743409 0.4106054
+bayes_relpub <- regressionBF(
+  formula = act_dailysleep_eff_z ~ tanner_adrenal_act_z, data = pub_act_final_rem_cent
+) # bayes: 6.598004
+
+pubmodgo <- lm(act_dailysleep_eff_z ~ tanner_gonadal_act_z, data = pub_act_final_rem_cent)
+summary(gvlma(pubmodgo))
+summary(pubmodgo)
+ci_pubmodgo = Boot(pubmodgo, coef,
+method='case', R=1000)
+boot_confint_relpub <- confint(ci_pubmodgo, type='norm')
+bayes_relpub <- regressionBF(
+  formula = act_dailysleep_eff_z ~ tanner_gonadal_act_z, data = pub_act_final_rem_cent
+) # 0.3804169
+p <- c(0.00547, 0.212)
+p.adjust(p, method = "fdr", n=length(p))  # 0.01094 0.21200
+```
+#### controlling for adolescent stress? 
+```{r}
+cor.test(pub_act_final$eff_perc_mean, pub_act_final$asq_total_act) # sig
+# not correlated so not repeating analysis controlling for this
+#r=0.1301356, p=0.1416
+```
+
+--------------------------------------------------------------------------------
+
+# association between sleep efficiency and sleep duration
+```{r}
+cor.test(pub_act_final$eff_perc_mean, pub_act_final$sleep_time_hrs_mean)
+# r = 0.3605959, p<0.001
+summary(pub_act_final$sleep_time_hrs_mean)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#  5.082   6.347   6.863   6.827   7.428   8.539 
+sd(pub_act_final$sleep_time_hrs_mean)
+```
+
+## outliers - sleep duration
+```{r}
+
+boxplot.stats(pub_act_final$sleep_time_hrs_mean)$out # 0 outliers
+
+```
+
+## centering based on this sample
+I standardized tanner stage, age at tanner assessment, and bmi within each sex
+```{r}
+pub_act_final_cent <-
+  pub_act_final %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_ACT = factor(COVID_AHC_ACT),
+    act_dailysleep_eff_z = scale(eff_perc_mean),
+    act_dailysleephrs_z = scale(sleep_time_hrs_mean),
+    sumsev_type_z = scale(sumsev_type),
+    household_income_act = scale(Household_Income_ACT)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_avg_at_act_z = scale(tanner_average_for_act), # standardize within each sex
+    tanner_adrenal_act_z = scale(tanner_adrenal_act),
+    tanner_gonadal_act_z = scale(tanner_gonadal_act),
+    bmi_at_act_z = scale(BMI_ACT),
+    age_at_tanner_at_act_z = scale(tanner_age_for_act)
+  ) %>%
+  ungroup()
+```
+
+## computing relative pubertal stage
+
+```{r}
+rel_pub_modhrs <- lm(tanner_avg_at_act_z ~ age_at_tanner_at_act_z, data = pub_act_final_cent)
+summary(rel_pub_modhrs)
+pub_act_final_cent <-
+  pub_act_final_cent %>% 
+  add_residuals(rel_pub_modhrs, var = "rel_pub_stg_hrs")
+```
+
+## associations with possible covariates
+```{r}
+cor.test(pub_act_final_cent$act_dailysleephrs_z, pub_act_final_cent$bmi_at_act_z) # not sig
+# r=-0.08688895, p=0.33
+cor.test(pub_act_final_cent$act_dailysleephrs_z, pub_act_final_cent$household_income_act) # not sig
+# r=0.1672924, p=0.06
+cor.test(pub_act_final_cent$act_dailysleephrs_z, pub_act_final_cent$sumsev_type_z) # not sig
+# r=-0.117358, p=0.18
+summary(lm(act_dailysleephrs_z ~ COVID_AHC_ACT, data = pub_act_final_cent)) # not sig
+# B=0.035045, p=0.86
+summary(lm(act_dailysleephrs_z ~ Sex, data = pub_act_final_cent)) # strong association 
+# B=0.6094, p=0.00042 
+```
+
+### sex  differences
+```{r}
+sleephrs_male <- 
+  pub_act_final_cent %>%
+  filter(Sex == "1")
+sleephrs_female <- 
+  pub_act_final_cent %>%
+  filter(Sex == "2")  
+
+meanslphrsmale = mean(sleephrs_male$sleep_time_hrs_mean) # 6.543706
+meanslphrsmale
+sd(sleephrs_male$sleep_time_hrs_mean) # 0.742484
+meanslphrsfemale = mean(sleephrs_female$sleep_time_hrs_mean) # 7.00863
+meanslphrsfemale
+sd(sleephrs_female$sleep_time_hrs_mean) # 0.7234857
+
+pub_act_final_cent <-
+  pub_act_final_cent %>%
+  mutate(
+    Sex_label = recode_factor(Sex, "1" = "Male", "2" = "Female")
+  )
+
+sleep_tme_sex <- 
+  pub_act_final_cent %>%
+  ggplot(
+    aes(
+      x = Sex_label, y = sleep_time_hrs_mean, fill = Sex_label
+    ) 
+  ) +
+  geom_violin(alpha=0.5, color= "black") +
+  geom_boxplot(width=0.1, color = "grey", alpha=0.5) +
+  scale_fill_manual(values=c("orange", "darkgreen")) +
+  theme_classic() +
+  labs(
+    x = "Sex",
+    y = "Hours of Sleep (objective)",
+    title = "Sex and Sleep Duration",
+    fill = "Sex"
+  ) +
+  theme(plot.title = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12)) 
+ggsave("obj_sleep_dur_sex.png", sleep_tme_sex)
+
+```
+
+# Tanner Average and Sleep Duration Association
+
+## association between relative pubertal stage score and sleep duration
+```{r}
+# relative pubertal stage
+relpubhrs <- lm(act_dailysleephrs_z ~ rel_pub_stg_hrs + Sex, data = pub_act_final_cent)
+summary(gvlma(relpubhrs)) # acceptable
+
+summary(relpubhrs)
+
+# No associaiton between relative pubertal stage and sleep dur
+# (B=-0.00285, p=0.974269)
+# still association between sex and sleep duration (B=0.60939, p=0.000442)
+# model R2 = 0.07528, p=0.002035
+
+# CI
+ci_relpub = Boot(relpubhrs, coef,
+method='case', R=1000)
+boot_confint_relpub <- confint(ci_relpub, type='norm')
+# rel_pub_stg_hrs -0.16210  0.15229
+# Sex2             0.27561  0.94448
+
+# Bayes Factor
+bayes_relpub <- generalTestBF(
+  formula = act_dailysleephrs_z ~ rel_pub_stg_hrs + Sex, data = pub_act_final_cent
+)
+# [1] rel_pub_stg_hrs       : 0.18379 ±0%
+# [2] Sex                   : 60.426  ±0%
+```
+
+-----------------------------------------------------------------------------------
+# Circadian preference
+```{r}
+pub_act_final_cmep <-
+  pub_act_final %>%
+  drop_na(cmep_total_act)
+```
+
+
+## outliers - circadian preference
+```{r}
+
+boxplot.stats(pub_act_final_cmep$cmep_total_act)$out # 0 outliers
+summary(pub_act_final_cmep$cmep_total_act)
+#  Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#   13.0    23.0    26.5    26.3    30.0    39.0 
+sd(pub_act_final_cmep$cmep_total_act) # 5.778154
+
+```
+## associations with other sleep measures
+```{r}
+cor.test(pub_act_final_cmep$cmep_total_act, pub_act_final_cmep$eff_perc_mean)
+# r=-0.1377, p=0.15
+cor.test(pub_act_final_cmep$cmep_total_act, pub_act_final_cmep$sleep_time_hrs_mean)
+# r=-0.1633, p=0.085
+```
+
+## centering based on this sample
+I standardized tanner stage, age at tanner assessment, and bmi within each sex
+```{r}
+pub_act_final_cmep_cent <-
+  pub_act_final_cmep %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_ACT = factor(COVID_AHC_ACT),
+    act_dailysleep_eff_z = scale(eff_perc_mean),
+    act_dailysleephrs_z = scale(sleep_time_hrs_mean),
+    cmep_total_act_z = scale(cmep_total_act),
+    sumsev_type_z = scale(sumsev_type),
+    household_income_act = scale(Household_Income_ACT)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_avg_at_act_z = scale(tanner_average_for_act), # standardize within each sex
+    tanner_adrenal_act_z = scale(tanner_adrenal_act),
+    tanner_gonadal_act_z = scale(tanner_gonadal_act),
+    bmi_at_act_z = scale(BMI_ACT),
+    age_at_tanner_at_act_z = scale(tanner_age_for_act)
+  ) %>%
+  ungroup()
+```
+
+## computing relative pubertal stage
+
+```{r}
+rel_pub_modcmep<- lm(tanner_avg_at_act_z ~ age_at_tanner_at_act_z, data = pub_act_final_cmep_cent)
+
+summary(rel_pub_modcmep)
+
+pub_act_final_cmep_cent <-
+  pub_act_final_cmep_cent %>% 
+  add_residuals(rel_pub_modcmep, var = "rel_pub_stg_cmep")
+```
+
+
+## associations with possible covariates
+```{r}
+cor.test(pub_act_final_cmep_cent$cmep_total_act_z, pub_act_final_cmep_cent$bmi_at_act_z) # not sig
+# r=0.06311966, p=0.5224
+cor.test(pub_act_final_cmep_cent$cmep_total_act_z, pub_act_final_cmep_cent$household_income_act) # not sig
+# r=-0.05772035, p=0.5586
+cor.test(pub_act_final_cmep_cent$cmep_total_act_z, pub_act_final_cmep_cent$sumsev_type_z) # not sig
+# r=0.05114966, p=0.5922
+summary(lm(cmep_total_act_z ~ Sex, data = pub_act_final_cmep_cent)) # not sig 
+# B=-.2383, p=0.221 
+summary(lm(cmep_total_act_z ~ COVID_AHC_ACT, data = pub_act_final_cmep_cent)) # moderate associaiton
+# B=-0.4088, p=.0577
+
+```
+
+```{r}
+cmepmod <- lm(cmep_total_act_z ~ rel_pub_stg_cmep, data = pub_act_final_cmep_cent)
+
+summary(gvlma(cmepmod)) # all checks out
+summary(cmepmod)
+# pub: B=-0.0559, p=0.3579
+
+# overall R2=0.02427, p=0.587
+
+cmepboot = Boot(cmepmod, coef,
+method='case', R=1000)
+# bootstrap standard confidence interval
+cmepbootconfint <- confint(cmepboot, type='norm')
+# rel_pub_stg_cmep -0.26835 0.14667
+
+bayes <- regressionBF(
+  formula = cmep_total_act_z ~ rel_pub_stg_cmep, data = pub_act_final_cmep_cent
+)
+# [1] rel_pub_stg_cmep                 : 0.2290488 ±0%
+```
+
+# correlations among sleep measures
+## correlations
+```{r}
+library(modelr)
+library(corrr)
+pub_act_final %>% 
+  dplyr::select(
+    cmep_total_act,
+    eff_perc_mean,
+    sleep_time_hrs_mean
+  ) %>% 
+  correlate() %>% 
+  fashion()
+
+corr_act_sleep <-
+  pub_act_final %>%
+    dplyr::select(
+    cmep_total_act,
+    eff_perc_mean,
+    sleep_time_hrs_mean
+  ) %>%
+  rename(
+    `Circadian Preference` = cmep_total_act,
+    `Sleep Efficiency` = eff_perc_mean,
+    `Sleep Duration` = sleep_time_hrs_mean
+  ) %>%
+  corrr::correlate() %>%
+  corrr::shave(upper = FALSE)
+corr_act_sleep
+
+corr_act_sleep_long <-
+  corr_act_sleep %>%
+  pivot_longer(
+    cols = -term,
+    names_to = "colname",
+    values_to = "corr"
+  ) %>%
+  mutate(
+    rowname = fct_inorder(term),
+    colname = fct_inorder(colname)
+  )
+corr_act_sleep_long
+
+# plotting correlations
+corrplotsleep <- 
+  corr_act_sleep_long %>%
+  ggplot(
+    aes(
+      x = rowname,
+      y = fct_rev(colname),
+      fill = corr
+    )
+  ) +
+  geom_tile() +
+  geom_text(
+    aes(
+      label = round(corr, 2)
+      )
+    ) +
+  coord_fixed(expand = FALSE) +
+  scale_fill_distiller(
+    palette = "RdBu", 
+    na.value = "white",
+    direction = 1,
+    limits = c(-1,1)
+  ) +
+  labs(
+    x = "",
+    y = ""
+  ) +
+ theme(
+   axis.text = element_text(size = 10, angle = 30, hjust = 1)
+ )
+corrplotsleep
+ggsave("corrplot_sleep.png", corrplotsleep)
+```
+
+--------------------------------------------------------------------------------
+
+```{r, message=FALSE}
+actlongfp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/actig_long.csv"
+actlong <- 
+  read_csv(actlongfp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  )
+actig_long_2wkpub <-
+  left_join(
+    actlong,
+    pub_act_final,
+    by = "ELS_ID"
+  ) %>%
+  drop_na(tanner_average_for_act)
+
+actig_long_2wkpub %>%
+  distinct(ELS_ID)
+
+actig_long_2wk <-
+  actig_long_2wkpub %>%
+  mutate(
+    triggerdate = mdy(start_date),
+    actstartdate = mdy(data_start_date)
+  )
+
+# creating day and week variables
+actig_long_2wk_day <-
+  actig_long_2wk %>%
+  mutate(
+    day = day(triggerdate),
+    wday = wday(triggerdate, label = TRUE),
+    ELS_ID = factor(ELS_ID)
+  ) 
+
+# day num
+actig_long_2wk_dayorder  <-
+  actig_long_2wk_day %>%
+  group_by(ELS_ID) %>% 
+  mutate(
+    dayorder = order(triggerdate)
+    )
+
+actig_long_2wk_dayorder2 <-
+  actig_long_2wk_dayorder %>%
+  mutate(
+    week =
+      ifelse(
+        wday == "Sun" |
+          wday == "Sat",
+        "wkend",
+        "wkday"
+      )
+  )
+
+actig_long_2wk_dayorder2 %>%
+  distinct(ELS_ID)
+```
+
+### distribution of weekday vs. weekend and association with sleep eff and hrs
+```{r, message=FALSE}
+library(lmerTest)
+```
+
+```{r}
+level_key <- c(wkday = "weekday", wkend = "weekend")
+actig_long_2wk_dayorder2 <-
+  actig_long_2wk_dayorder2 %>%
+  mutate(
+    week = factor(week),
+    week =  recode_factor(week,!!!level_key),
+    dayorder = as.numeric(dayorder),
+    sleep_time_hrs = as.numeric(sleep_time_hrs)
+  )
+
+actig_long_2wk_dayorder2 %>%
+  ggplot(
+    aes(x = week, y = efficiency, fill = week)
+  ) +
+  geom_violin(alpha=0.5, color= "black") +
+  geom_boxplot(width=0.1, color = "grey", alpha=0.5) +
+  scale_fill_manual(values = c("#FFA07A","#6B8E23")) +
+  theme_classic() +
+  labs(x = "Weekday or Weekend", y = "Sleep Effiency")
+ggsave("wkdayvsweeknd_sleepeff.png", width = 7, height = 6)
+
+summary(lmer(scale(efficiency) ~ scale(dayorder) +factor(week) + (1 + scale(dayorder)|ELS_ID), data = actig_long_2wk_dayorder2))
+
+actig_long_2wk_dayorder2 %>%
+  ggplot(
+    aes(x = week, y = sleep_time_hrs, fill = week)
+  ) +
+  geom_violin(alpha=0.5, color= "black") +
+  geom_boxplot(width=0.1, color = "grey", alpha=0.5) +
+  scale_fill_manual(values = c("#FFA07A","#6B8E23")) +
+  theme_classic() +
+  labs(x = "Weekday or Weekend", y = "Objective Sleep Duration")
+ggsave("wkdayvsweeknd_objsleephrs.png", width = 7, height = 6)
+
+
+
+summary(lmer(scale(sleep_time_hrs) ~ scale(dayorder) + factor(week) + (1 + scale(dayorder)|ELS_ID), data = actig_long_2wk_dayorder2))
+
+
+sleep_week <-
+  actig_long_2wk_dayorder2 %>%
+  group_by(ELS_ID, week) %>%
+  summarize(
+    n = n()
+  )
+
+actig_long_2wk_dayorder2_spread <-
+  actig_long_2wk_dayorder2 %>%
+  spread(week, efficiency)
+
+
+actig_long_2wk_dayorder2 %>%
+  ggplot(
+    aes(
+      x = dayorder, 
+      y = efficiency,
+      color = week
+    )
+  ) +
+  geom_line(aes(group = ELS_ID, color = week), alpha = .3) +
+  geom_smooth(method = "loess", se=FALSE, size = 2) +
+  theme_classic() +
+  scale_x_continuous(
+    name = "Day",
+    limits = c(1, 14),                    
+    breaks = seq(1, 14, 1)
+    ) +
+   scale_y_continuous(
+    name = "Sleep Efficiency",
+    limits = c(1, 100),                    
+    breaks = seq(1, 100, 10)
+    ) + 
+  scale_color_manual(values = c("#FFA07A","#6B8E23"))
+
+ggsave("sleepeff_byDay_byWkdayWkend.png", width = 7, height = 6)
+
+actig_long_2wk_dayorder2 %>%
+  ggplot(
+    aes(
+      x = dayorder, 
+      y = sleep_time_hrs,
+      color = week
+    )
+  ) +
+  geom_line(aes(group = ELS_ID, color = week), alpha = .3) +
+  geom_smooth(method = "loess", se=FALSE, size = 2) +
+  theme_classic() +
+  scale_x_continuous(
+    name = "Day",
+    limits = c(1, 14),                    
+    breaks = seq(1, 14, 1)
+    ) +
+   scale_y_continuous(
+    name = "Sleep Hours",
+    limits = c(0, 13),                    
+    breaks = seq(0, 13, 1)
+    ) + 
+  scale_color_manual(values = c("#FFA07A","#6B8E23"))
+
+ggsave("objsleephrs_byDay_byWkdayWkend.png", width = 7, height = 6)
+
+```

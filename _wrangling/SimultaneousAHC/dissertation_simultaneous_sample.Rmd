@@ -1,0 +1,646 @@
+---
+title: "dissertation_overlapped_sample"
+author: "Jackie and Sache"
+date: "7/2/2021"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+# libraries
+
+```{r}
+library(tidyverse)
+```
+
+# read in data
+
+```{r, message=FALSE}
+pub_demo_act_mw_sim_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/SimultaneousAHC/dem_and_tanner_mw_act_simultaneous.csv"
+
+pub_demo_act_mw_sim <-
+  read_csv(pub_demo_act_mw_sim_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID))
+
+numbers_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/SacheCoury/Jackie_dissertation/assessing_numbers/els_subjs_list_rest_ica_ahc.csv"
+
+nums <- 
+  read_csv(numbers_fp) %>%
+  mutate(
+    ELS_ID = 
+      str_remove_all(ELS_ID, "sub-"),
+    ELS_ID = as.numeric(ELS_ID), 
+    ELS_ID = as.factor(ELS_ID)
+  )
+
+actig_reduced <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/actig_merged.csv"
+
+act <-
+  read_csv(actig_reduced) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID),
+    actigraphy_start_date = as.character(actigraphy_start_date)
+    )
+
+mw_reduced <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/MW_daily_sleep_data_reduced.csv"
+
+mw <-
+  read_csv(mw_reduced) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID),
+    mw_start_date = as.character(startdate)
+  )
+  
+
+```
+
+
+## cleaning df
+```{r}
+pub_demo_act_mw_sim_clean <-
+  pub_demo_act_mw_sim %>% # just choosing act bc same as mw
+  rename(
+    session_usable = ACT_session_usable,
+    tanner_date = tanner_date_for_act,
+    tanner_average = tanner_average_for_act,
+    tanner_adrenal = tanner_adrenal_act,
+    tanner_gonadal = tanner_gonadal_act,
+    age = tanner_age_for_act,
+    cmep_total = cmep_total_act,
+    COVID_AHC = COVID_AHC_ACT,
+    BMI = BMI_ACT,
+    asq_total = asq_total_act,
+    household_income = Household_Income_ACT
+  ) %>%
+  dplyr::select(
+    ELS_ID, Sex, session_usable, mw_start_date, actigraphy_start_date, days_act_to_tanner, days_mw_to_tanner, tanner_date, tanner_average, tanner_adrenal, tanner_gonadal, age, cmep_total, COVID_AHC, BMI, asq_total, household_income, KSADS_Child_Race_by_P.T1, BMI.T1, Parent_Education.T1, Tanner_Average.T1, sumsev_type
+  ) %>%
+  mutate(
+    mw_start_date = as.character(mw_start_date),
+    actigraphy_start_date = as.character(actigraphy_start_date)
+  )
+```
+
+## joining dataframes
+
+```{r}
+act_mw_pub <-
+  left_join(
+    pub_demo_act_mw_sim_clean,
+    mw,
+    by = c("ELS_ID", "mw_start_date")
+  )
+
+act_mw_pub2 <-
+  left_join(
+    act_mw_pub,
+    act,
+    by = c("ELS_ID", "actigraphy_start_date")
+  ) %>% 
+  mutate(
+    dup = duplicated(ELS_ID) #
+    ) %>% # 144 had an extra row for some reason, but they are exactly the same
+  distinct(ELS_ID, .keep_all = TRUE) %>%
+    dplyr::select(-dup)
+
+act_mw_pub_dup <-
+  act_mw_pub2 %>%
+  filter(duplicated(ELS_ID)) # woo! no redundancies
+```
+
+
+## stand varaibles
+_tanner, age, and bmi, are standardized within each sex_
+```{r}
+act_mw_pub_cent <-
+  act_mw_pub2 %>%
+  mutate(
+    Sex = factor(Sex),
+    ELS_ID = factor(ELS_ID),
+    KSADS_Child_Race_by_P.T1 = factor(KSADS_Child_Race_by_P.T1),
+    COVID_AHC = factor(COVID_AHC),
+    dailysleep_sat_mean_z = scale(dailysleep_sat_mean),
+    dailysleep_hrs_mean_z = scale(dailysleep_hrs_mean),
+    eff_perc_mean_z = scale(eff_perc_mean),
+    sleep_time_hrs_mean_z = scale(sleep_time_hrs_mean),
+    sumsev_type_z = scale(sumsev_type),
+    Household_Income_z = scale(household_income)
+  ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_average_z = scale(tanner_average),
+    tanner_adrenal_z = scale(tanner_adrenal),
+    tanner_gonadal_z = scale(tanner_gonadal),
+    age_z= scale(age),
+    BMI_z = scale(BMI)
+  )
+
+# missing tanner ?
+missingtanner <-
+  act_mw_pub_cent %>%
+  filter(is.na(tanner_date)) # no tanner missing - yay
+```
+
+# do objective and subjective sleep correlate?
+```{r}
+# 1) subjective sat and hrs corr
+cor.test(act_mw_pub_cent$dailysleep_sat_mean, act_mw_pub_cent$dailysleep_hrs_mean) # sig positive correlation (r=0.48, p< wow)
+
+# 2) objective eff and hrs corr
+cor.test(act_mw_pub_cent$eff_perc_mean, act_mw_pub_cent$sleep_time_hrs_mean) # sig positive correlation (r=0.354, p=0.001)
+
+# 3) obj eff and subj sat
+cor.test(act_mw_pub_cent$dailysleep_sat_mean, act_mw_pub_cent$eff_perc_mean) # slightly negative correlation, non-sig (r=-0.109, p=0.3)
+
+# 4) obj eff and subj hrs
+cor.test(act_mw_pub_cent$dailysleep_hrs_mean, act_mw_pub_cent$sleep_time_hrs_mean) # very sig association
+# sig positive correlation (r=0.42, p< wow)
+
+# interesting --- maybe p's are good at reflecting how much they slept, but doesn't neces
+
+
+corr_sleep <-
+  act_mw_pub_cent %>%
+  as_tibble() %>%
+  dplyr::select(dailysleep_sat_mean, dailysleep_hrs_mean, sleep_time_hrs_mean, eff_perc_mean, cmep_total)  %>%
+  rename(
+    sleep_satisfaction = dailysleep_sat_mean,
+    sleep_duration_subj = dailysleep_hrs_mean,
+    sleep_duration_obj = sleep_time_hrs_mean,
+    sleep_eff_obj = eff_perc_mean,
+    cmep = cmep_total
+  ) %>%
+  corrr::correlate() %>%
+  corrr::shave(upper = FALSE)
+corr_sleep
+
+corr_sleep_long <-
+  corr_sleep %>%
+  pivot_longer(
+    cols = -term,
+    names_to = "colname",
+    values_to = "corr"
+  ) %>%
+  mutate(
+    rowname = fct_inorder(term),
+    colname = fct_inorder(colname)
+  ) %>%
+  drop_na()
+corr_sleep_long
+library(hrbrthemes)
+library(viridis)
+corr_sleep_long %>%
+  ggplot(
+    aes(
+      x = rowname,
+      y = fct_rev(colname),
+      fill = corr
+    )
+  ) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  theme_ipsum()+
+  labs(
+    x = "",
+    y = ""
+  ) +
+ theme(
+   axis.text = element_text(size = 10, angle = 30, hjust = 1)
+ )
+
+# plotting correlations
+corrplotsleep <- 
+  corr_sleep_long %>%
+  ggplot(
+    aes(
+      x = rowname,
+      y = fct_rev(colname),
+      fill = corr
+    )
+  ) +
+  geom_tile() +
+  geom_text(
+    aes(
+      label = round(corr, 2)
+      )
+    ) +
+  coord_fixed(expand = FALSE) +
+  scale_fill_distiller(
+    palette = "RdBu", 
+    na.value = "white",
+    direction = 1,
+    limits = c(-1,1)
+  ) +
+  labs(
+    x = "",
+    y = ""
+  ) +
+ theme(
+   axis.text = element_text(size = 10, angle = 30, hjust = 1)
+ )
+corrplotsleep
+ggsave("corrplot_sleep.png", corrplotsleep)
+
+
+```
+
+```{r}
+library(effectsize)
+t.test(act_mw_pub_cent$dailysleep_hrs_mean, act_mw_pub_cent$sleep_time_hrs_mean)
+# there is a sig difference between average duration
+t_to_d(3.349, 155.96, paired = TRUE, ci = 0.95)
+```
+
+# Aim 1: pubertal associations with sleep
+
+## testing potential covariates
+```{r}
+summary(lm(dailysleep_sat_mean_z ~ COVID_AHC, data = act_mw_pub_cent))
+# B=0.0327, p=0.89
+cor.test(act_mw_pub_cent$dailysleep_sat_mean_z,act_mw_pub_cent$BMI_z)
+# r=-0.0712, p=0.5
+cor.test(act_mw_pub_cent$dailysleep_sat_mean_z, act_mw_pub_cent$age_z)
+# r=-0.038, p=0.7
+cor.test(act_mw_pub_cent$dailysleep_sat_mean_z, act_mw_pub_cent$Household_Income_z)
+# r=0.148, p=0.2
+cor.test(act_mw_pub_cent$dailysleep_sat_mean_z, act_mw_pub_cent$sumsev_type)
+# r=0.0841, p=0.5
+
+# dem associations with obj response variable
+summary(lm(eff_perc_mean_z ~ COVID_AHC, data = act_mw_pub_cent))
+# B=0.00602, p=0.98
+cor.test(act_mw_pub_cent$eff_perc_mean_z, act_mw_pub_cent$BMI_z)
+# r=0.142, p=0.2
+cor.test(act_mw_pub_cent$eff_perc_mean_z, act_mw_pub_cent$age_z)
+# r=0.0545, p=0.6
+cor.test(act_mw_pub_cent$eff_perc_mean_z, act_mw_pub_cent$Household_Income_z)
+# r=0.143, p=0.2
+cor.test(act_mw_pub_cent$eff_perc_mean_z, act_mw_pub_cent$sumsev_type_z)
+# r=-0.00216, p=1
+```
+> none will be used
+
+
+## removing tanner outliers
+```{r}
+out <- boxplot.stats(act_mw_pub_cent$dailysleep_sat_mean_z)$out # no average sleep outliers
+out <- boxplot.stats(act_mw_pub_cent$eff_perc_mean_z)$out # no average sleep outliers
+```
+
+## creating relative pubertal stage variable
+```{r}
+rel_pub_mod <- lm(tanner_average_z  ~ age_z, data = act_mw_pub_cent)
+summary(rel_pub_mod)
+act_mw_pub_cent <-
+  act_mw_pub_cent %>% 
+  add_residuals(rel_pub_mod, var = "rel_pub_stg")
+```
+## is tanner associated with sleep?
+
+### subjective
+```{r}
+#1)  main analysis tests relative pubertal stage
+summary(lm(dailysleep_sat_mean_z ~ rel_pub_stg , data = act_mw_pub_cent))
+# sig association between rel pub stg and sleep satisfaction
+# B = -0.26149, p=0.026
+summary(lm(dailysleep_sat_mean_z ~ tanner_gonadal_z , data = act_mw_pub_cent))
+summary(lm(dailysleep_sat_mean_z ~ tanner_adrenal_z , data = act_mw_pub_cent))
+
+summary(lm(dailysleep_hrs_mean_z ~ rel_pub_stg, data = act_mw_pub_cent))
+# no association between rel pub stg and sleep duration
+# B = -0.0196, p=0.87
+
+#2) just making sure association stays the same with tanner and age as separate variables
+summary(lm(dailysleep_sat_mean_z ~ tanner_average_z + age_z, data = act_mw_pub_cent))
+# tanner_average_z B=-0.2614952  p=0.027 *
+# age_z            B=0.0378407, p=0.745  
+```
+
+### objective
+```{r}
+#1)  main analysis tests relative pubertal stage
+summary(lm(eff_perc_mean_z ~ rel_pub_stg, data = act_mw_pub_cent))
+# no association
+summary(lm(sleep_time_hrs_mean_z ~ rel_pub_stg, data = act_mw_pub_cent))
+#  no assocation
+
+#2) just making sure association stays the same with tanner and age as separate variables
+summary(lm(eff_perc_mean_z ~ tanner_average_z + age_z, data = act_mw_pub_cent))
+```
+# Brain Analysis
+
+## For Aim 2: Brain
+```{r}
+brain_final_sample <-
+  left_join(
+    nums,
+    pub_demo,
+    by = "ELS_ID"
+  ) %>%
+  mutate(
+    mismatch_rs_ahc =
+      ifelse(
+        (str_detect(restingstate_timept, "T3") |
+          restingstate_timept == "BOTH") &
+          str_detect(timepoint, "T3"),
+        "match",
+        NA
+      ),
+    mismatch_rs_ahc =
+      ifelse(
+        (str_detect(restingstate_timept, "T4") |
+          restingstate_timept == "BOTH") &
+          str_detect(timepoint, "T4"),
+        "match",
+        mismatch_rs_ahc        
+      ),
+    mismatch_rs_ahc =
+      ifelse(
+        is.na(mismatch_rs_ahc) &
+          !is.na(timepoint),
+        "mismatch",
+        mismatch_rs_ahc
+      )
+  ) # IDs 38, 136, and 138 have mismatches, meaning that their AHC and RS are at different timepoints: 38 had AHC at T4 but only has T3 scan; 136 and 152 have AHC at T3 but only have T4 scans
+
+write_csv(brain_final_sample, "brain_final_sample_simultaneousAHC.csv")
+```
+
+## df with simulataneous ahc with brain
+```{r}
+brain_final_sample <- 
+  brain_final_sample %>%
+  filter(!is.na(timepoint)) %>%
+  filter(mismatch_rs_ahc == "match")
+```
+
+> I conducted the ICA on the largest possible sample to get more generalizable components. This meant conducting the ICA twice since some subjects (N=6) had two resting state scans that aligned with either MW or actiwatch. All but one of these 6 subjects had T3 scan for actigraphy (1 had T4 scan for actigraphy). We used the T3 scan for those with simulataneous AHC, except one who had simulataneous AHC and resting-state at T4. Given most of these subjects had a T3 scan, for the main analysis here I'll be using the ICA FC values that have the more homogenous composition (actigraphy ICA), but will make sure results hold in the EMA ICA.
+
+```{r}
+act_36R_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/GICAandDualReg_actigraphy36R/coherence_act_36R.xlsx"
+act_36R <- read_excel(act_36R_fp, sheet = "comb_coherence_act_36R") %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  mutate(
+    timepoint_act_36R =
+      ifelse(
+        str_detect(ELS_ID, "ses-T3x"),
+        "T3x",
+        "T3"
+      ),
+    timepoint_act_36R =
+      ifelse(
+        str_detect(ELS_ID, "ses-T4"),
+        "T4",
+        timepoint_act_36R
+      )
+  ) %>%
+  relocate(timepoint_act_36R, .after = ELS_ID)
+
+inter_net_corr_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/net2net/inter_net_corr_merged_act_36R.csv"
+inter_net_act <- read_csv(inter_net_corr_fp) %>%
+  mutate(
+    ELS_ID = str_remove(ELS_ID, "sub-"),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+  )
+```
+
+```{r}
+# for 36R
+act_36R_clean <-
+  act_36R %>%
+  mutate(
+    timepoint =
+      ifelse(
+        str_detect(ELS_ID, "T3"),
+        "T3",
+        "T4"
+        ),
+    ELS_ID_shortened = 
+      substr(ELS_ID, 5, 7)
+    ) %>%
+  relocate(ELS_ID_shortened, .after = ELS_ID) %>%
+  relocate(timepoint, .after = ELS_ID_shortened) %>%
+  mutate(
+    ELS_ID_shortened = 
+      as.numeric(ELS_ID_shortened),
+    ELS_ID_shortened =
+      factor(ELS_ID_shortened)
+    ) %>%
+  dplyr::select(-ELS_ID) %>%
+  rename(ELS_ID = ELS_ID_shortened) %>%
+  dplyr::select(-salience_Z, -thalamicstriatal_Z)
+
+act_36R_clean_tmpt <-
+  act_36R_clean %>%
+  rename(
+    timepoint_36R = timepoint,
+    aDMN_Z_36R_act = aDMN_Z,
+    lECN_Z_36R_act = lECN_Z,
+    Noise_brainstem_Z_36R_act = Noise_brainstem,
+    pDMN_Z_36R_act = pDMN_Z,
+    rECN_Z_36R_act = rECN_Z
+  ) %>%
+  dplyr::select(-lECN_Z_36R_act, -rECN_Z_36R_act)
+
+act_36R_clean_tmpt_inter <-
+  left_join(
+    act_36R_clean_tmpt,
+    inter_net_act,
+    by = "ELS_ID"
+    )
+```
+
+```{r}
+mw_36R_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/GICAandDualReg_MW36R/coherence_mw_36R.xlsx"
+mw_36R <- read_excel(mw_36R_fp, sheet = "comb_coherence_mw_36R") %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  mutate(
+    timepoint_mw_36R =
+      ifelse(
+        str_detect(ELS_ID, "ses-T3x"),
+        "T3x",
+        "T3"
+      ),
+    timepoint_mw_36R =
+      ifelse(
+        str_detect(ELS_ID, "ses-T4"),
+        "T4",
+        timepoint_mw_36R
+      )
+  ) %>%
+  relocate(timepoint_mw_36R, .after = ELS_ID)
+
+inter_net_corr_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/net2net/inter_net_corr_merged_mw_36R.csv"
+inter_net_mw <- read_csv(inter_net_corr_fp) %>%
+  mutate(
+    ELS_ID = str_remove(ELS_ID, "sub-"),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+  )
+
+mw_36R_clean <-
+  mw_36R %>%
+  mutate(
+    timepoint =
+      ifelse(
+        str_detect(ELS_ID, "T3"),
+        "T3",
+        "T4"
+        ),
+    ELS_ID_shortened = 
+      substr(ELS_ID, 5, 7)
+    ) %>%
+  relocate(ELS_ID_shortened, .after = ELS_ID) %>%
+  relocate(timepoint, .after = ELS_ID_shortened) %>%
+  mutate(
+    ELS_ID_shortened = 
+      as.numeric(ELS_ID_shortened),
+    ELS_ID_shortened =
+      factor(ELS_ID_shortened)
+    ) %>%
+  dplyr::select(-ELS_ID) %>%
+  rename(ELS_ID = ELS_ID_shortened) %>%
+  dplyr::select(-salience_Z, -thalamicstriatal_Z)
+
+mw_36R_clean_tmpt <-
+  mw_36R_clean %>%
+  rename(
+    timepoint_36R = timepoint,
+    aDMN_Z_36R_mw = aDMN_Z,
+    lECN_Z_36R_mw = lECN_Z,
+    Noise_brainstem_Z_36R_mw = Noise_brainstem_Z,
+    pDMN_Z_36R_mw = pDMN_Z,
+    rECN_Z_36R_mw = rECN_Z
+  ) %>%
+  dplyr::select(-lECN_Z_36R_mw, -rECN_Z_36R_mw)
+
+mw_36R_clean_tmpt_inter <-
+  left_join(
+    mw_36R_clean_tmpt,
+    inter_net_mw,
+    by = "ELS_ID"
+    )
+```
+
+## joining ICAs
+```{r}
+ica_all <-
+  left_join(
+    act_36R_clean_tmpt_inter,
+    mw_36R_clean_tmpt_inter,
+    by = c("ELS_ID", "timepoint_36R")
+  ) %>%
+  mutate(
+    aDMN_diff = aDMN_Z_36R_act - aDMN_Z_36R_mw,
+    pDMN_dff = pDMN_Z_36R_act - pDMN_Z_36R_mw,
+    noise_diff = Noise_brainstem_Z_36R_act - Noise_brainstem_Z_36R_mw,
+    admn_lecn_diff = admn_lecn_act - admn_lecn_mw,
+    admn_recn_diff = admn_recn_act - admn_recn_mw,
+    pdmn_lecn_diff = pdmn_lecn_act - pdmn_lecn_mw,
+    pdmn_recn_diff = pdmn_recn_act - pdmn_recn_mw,    
+  )
+```
+
+```{r}
+ica_all_Final <-
+  left_join(
+    act_mw_pub6,
+    ica_all,
+    by = "ELS_ID"
+  ) %>%
+  drop_na(aDMN_Z_36R_act)
+
+# centering
+ica_all_Final_cent <-
+  ica_all_Final %>%
+  mutate(
+    Sex = factor(Sex),
+    KSADS_Child_Race_by_P.T1_rec = factor(KSADS_Child_Race_by_P.T1_rec),
+    COVID_AHC = factor(COVID_AHC),
+    dailysleep_sat_mean_z = scale(dailysleep_sat_mean),
+    dailysleep_hrs_mean_z = scale(dailysleep_hrs_mean),
+    eff_perc_mean_z = scale(eff_perc_mean),
+    sleep_time_hrs_mean_z = scale(sleep_time_hrs_mean),
+    rmssd_sleep_hrs_act_z = scale(rmssd_sleep_hrs_act),
+    rmssd_sleep_hrs_mw_z = scale(rmssd_sleep_hrs_mw),
+    sumsev_type_z = scale(sumsev_type),
+    Household_Income_z = scale(Household_Income),
+    days_mw_to_tanner_z = scale(closest_mw_to_tanner),
+    days_act_to_tanner_z = scale(closest_act_to_tanner)
+  ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_average_simulAHC_z = scale(tanner_average),
+    tanner_adrenal_simulAHC_z = scale(tanner_adrenal),
+    tanner_gonadal_simulAHC_z = scale(tanner_gonadal),
+    age_simulAHC_z = scale(age),
+    BMI_z = scale(BMI)
+  )
+```
+
+## testing potential covariates
+```{r}
+# subj sleep satisfaction
+cor.test(ica_all_Final_cent$dailysleep_sat_mean_z, ica_all_Final_cent$BMI_z) # no association
+cor.test(ica_all_Final_cent$dailysleep_sat_mean_z, ica_all_Final_cent$tanner_average_simulAHC_z) # yes, but p value increased due to substantial decrease in N (will covary in regression)
+cor.test(ica_all_Final_cent$dailysleep_sat_mean_z, ica_all_Final_cent$age_simulAHC_z) # no association)
+
+# obj sleep satisfaction
+cor.test(ica_all_Final_cent$eff_perc_mean_z, ica_all_Final_cent$BMI_z) # no association
+cor.test(ica_all_Final_cent$eff_perc_mean_z, ica_all_Final_cent$tanner_average_simulAHC_z) # yes, but p value increased due to substantial decrease in N (will covary in regression)
+cor.test(ica_all_Final_cent$eff_perc_mean_z, ica_all_Final_cent$age_simulAHC_z) # no association)
+```
+
+## daily sleep satisfaction
+```{r}
+summary(lm(dailysleep_sat_mean_z ~ aDMN_Z_36R_act + pDMN_Z_36R_act + tanner_average_simulAHC_z, data = ica_all_Final_cent))
+summary(lm(dailysleep_sat_mean_z ~ admn_lecn_act + pdmn_lecn_act + tanner_average_simulAHC_z, data = ica_all_Final_cent))
+
+# making sure noise isn't associated
+summary(lm(dailysleep_sat_mean_z ~ Noise_brainstem_Z_36R_act + tanner_average_simulAHC_z, data = ica_all_Final_cent))
+
+#### making sure holds with those few subjs switched out
+summary(lm(dailysleep_sat_mean_z ~ aDMN_Z_36R_mw + pDMN_Z_36R_mw + tanner_average_simulAHC_z, data = ica_all_Final_cent))
+summary(lm(dailysleep_sat_mean_z ~ admn_lecn_mw + pdmn_lecn_mw + tanner_average_simulAHC_z, data = ica_all_Final_cent))
+summary(lm(dailysleep_sat_mean_z ~ Noise_brainstem_Z_36R_mw + tanner_average_simulAHC_z, data = ica_all_Final_cent))
+```
+
+> all no associations between subjective sleep sat and brain (same as the larger sample analysis)
+
+## efficiency
+```{r}
+summary(lm(eff_perc_mean_z ~ aDMN_Z_36R_act + pDMN_Z_36R_act, data = ica_all_Final_cent))
+summary(lm(eff_perc_mean_z ~ admn_lecn_act + pdmn_lecn_act, data = ica_all_Final_cent))
+
+# making sure noise isn't associated
+summary(lm(eff_perc_mean_z ~ Noise_brainstem_Z_36R_act, data = ica_all_Final_cent))
+
+#### making sure holds with those few subjs switched out
+summary(lm(eff_perc_mean_z ~ aDMN_Z_36R_mw + pDMN_Z_36R_mw, data = ica_all_Final_cent))
+# yes still holds
+summary(lm(eff_perc_mean_z ~ admn_lecn_mw + pdmn_lecn_mw, data = ica_all_Final_cent))
+summary(lm(eff_perc_mean_z ~ Noise_brainstem_Z_36R_mw, data = ica_all_Final_cent))
+```
+
+> as with our larger sample, the associatino holds between pDMN and sleep efficiency
+
+-------------------------------------------------------------------------
+### sleep duration? (posthoc)
+```{r}
+summary(lm(dailysleep_hrs_mean_z ~ aDMN_Z_36R_act + pDMN_Z_36R_act, data = ica_all_Final_cent))
+summary(lm(dailysleep_hrs_mean_z ~ admn_lecn_act + pdmn_lecn_act, data = ica_all_Final_cent))
+
+summary(lm(dailysleep_hrs_mean_z ~ aDMN_Z_36R_mw + pDMN_Z_36R_mw, data = ica_all_Final_cent))
+summary(lm(dailysleep_hrs_mean_z ~ admn_lecn_mw + pdmn_lecn_mw, data = ica_all_Final_cent))
+```
+
+### sleep duration? (posthoc)
+```{r}
+summary(lm(sleep_time_hrs_mean_z ~ aDMN_Z_36R_act + pDMN_Z_36R_act, data = ica_all_Final_cent))
+summary(lm(sleep_time_hrs_mean_z ~ admn_lecn_act + pdmn_lecn_act, data = ica_all_Final_cent))
+```
+
+> these analyses suggest that even with the most conservative sample (resting-state and both ahc administered simultaneously), our assocations between relative pubertal stage and subj sleep satisfaction hold, and associatiosn between pDMN and sleep efficiecy hold. Our non-associations also hold.

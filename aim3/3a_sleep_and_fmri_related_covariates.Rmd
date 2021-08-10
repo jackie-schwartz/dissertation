@@ -1,0 +1,506 @@
+---
+title: "4_sleep_and_fmri_related_covariates"
+author: "Jackie"
+date: "5/28/2021"
+output: html_document
+---
+
+# loading libraries
+```{r libraries, message=FALSE}
+library(tidyverse)
+library(foreign)
+library(haven)
+library(readxl)
+library(lubridate)
+```
+
+# reading in data
+```{r, message=FALSE}
+mrisurveyt3fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/ELST3ChildQuestionna_DATA_2021-05-19_1104.csv"
+mrisurveyt3_jackieedit <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/mri_survey.T3.xlsx" 
+mrisurveyt4fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/ELST4ChildQuestionna_DATA_2021-05-13_1026.csv"
+mrisurveyt4_jackieedit <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/mri_survey.T4.xlsx"
+
+mrisurveyt3 <- read_csv(mrisurveyt3fp)
+mrisurveyt3_jackieedit <- read_excel(mrisurveyt3_jackieedit, sheet = "mri_survey.T3") %>%
+  dplyr::select(record_id, ends_with("jackieedit"), t3_Jackie_Added_variable_commonly_used_sleep_agent)
+mrisurveyt4 <- read_csv(mrisurveyt4fp)
+mrisurveyt4_jackieedit <- read_excel(mrisurveyt4_jackieedit, sheet = "mri_survey.T4") %>%
+  dplyr::select(record_id, ends_with("jackieedit"), t4_Jackie_Added_variable_commonly_used_sleep_agent)
+```
+
+## cleaning data
+```{r}
+# time 3
+mrisurveyt3_clean <-
+  mrisurveyt3 %>%
+  filter(redcap_event_name == "scan_questionnaire_arm_1") %>%
+  dplyr::select(record_id, mri_survey_timestamp:smm_complete, -contains(c("planet", "kidmid")), -contains(c("pds", "tanner")), -contains("prize"), -contains(c("contracept", "smoke")))
+
+mrisurveyt3_clean <-
+  left_join(
+    mrisurveyt3_jackieedit,
+    mrisurveyt3_clean,
+    by = "record_id"
+  ) %>% mutate(
+    timepoint = 
+      ifelse(
+        str_detect(record_id, "x"),
+        "T3x",
+        "T3"
+        )
+    ) %>%
+  relocate(timepoint, .after = record_id) %>%
+  rename(
+    ELS_ID = record_id
+  ) %>%
+  mutate(
+    ELS_ID =
+      str_remove(
+        ELS_ID, "-T3"
+      ),
+    ELS_ID = 
+      str_remove(
+        ELS_ID, "x"
+        ),
+    timepoint =
+      ifelse(
+        str_detect(ELS_ID, "[.]"),
+        "T3x",
+        timepoint
+      ),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+    )
+
+# time 4
+mrisurveyt4_clean <-
+  mrisurveyt4 %>%
+  filter(redcap_event_name == "scan_questionnaire_arm_1") %>%
+  dplyr::select(record_id, mri_survey_timestamp:smm_complete, -contains(c("planet", "kidmid")), -contains(c("pds", "tanner")), -contains("prize"), -contains(c("contracept", "smoke")))
+
+mrisurveyt4_clean <-
+  left_join(
+    mrisurveyt4_jackieedit,
+    mrisurveyt4_clean,
+    by = "record_id"
+  ) %>% mutate(
+    timepoint = 
+      ifelse(
+        str_detect(record_id, "x"),
+        "T4x",
+        "T4"
+        )
+    ) %>%
+  relocate(timepoint, .after = record_id) %>%
+  rename(
+    ELS_ID = record_id
+  ) %>%
+  mutate(
+    ELS_ID =
+      str_remove(
+        ELS_ID, "-T4"
+      ),
+    ELS_ID = 
+      str_remove(
+        ELS_ID, "x"
+        ),
+    timepoint =
+      ifelse(
+        str_detect(ELS_ID, "[.]"),
+        "T4x",
+        timepoint
+      ),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+    )
+```
+
+### cleaning and selecting variables for caffeine and med
+for now just using `t3_mrisurv_caffeine_2`
+`t3_mrisurv_caffeine_1` = Do you drink caffeinated beverages (e.g., coffee, tea, soda)?	
+`t3_mrisurv_caffeine_2` = If so, when was the last time you had a caffeinated beverage? 	
+`t3_mrisurv_caffeine_3` = Was the amount of caffeine you had:	1, More than usual | 2, Usual | 3, Less than usual
+`t3_Jackie_Added_variable_commonly_used_sleep_agent` = 1, med indicated in `t3_mrisurv_med_1`, `t3_mrisurv_med_2`, `t3_mrisurv_med_3`, `t3_mrisurv_med_4`, `t3_mrisurv_med_5` is used for sleep | 0, if not
+`t3_mrisurv_meds` = 1, takes medication (for anything) | 0, doesn't take anything
+```{r}
+# t3
+mrisurveyt3_clean_caff <-
+  mrisurveyt3_clean %>%
+  dplyr::select(
+    ELS_ID,
+    timepoint,
+    mri_survey_timestamp,
+    t3_mrisurv_meds,
+    t3_Jackie_Added_variable_commonly_used_sleep_agent,
+    starts_with("t3_mrisurv_med_"),
+    contains("caffeine"),
+    contains("sleep"),
+    exit_7___5,
+    exit_7_1,
+  ) %>%
+  mutate(
+    t3_mrisurv_caffeine_2_wrangled =
+      ifelse(
+        str_detect(t3_mrisurv_caffeine_2_jackieedit, "today") |
+          str_detect(t3_mrisurv_caffeine_2_jackieedit, "Today") |
+          str_detect(t3_mrisurv_caffeine_2_jackieedit, "This morning") |
+          str_detect(t3_mrisurv_caffeine_2_jackieedit, "this Morning") |
+            str_detect(t3_mrisurv_caffeine_2_jackieedit, "this morning") |
+            str_detect(t3_mrisurv_caffeine_2_jackieedit, "hours ago") |
+          str_detect(t3_mrisurv_caffeine_2_jackieedit, "hour ago") |
+          str_detect(t3_mrisurv_caffeine_2_jackieedit, "Tea") |
+          str_detect(t3_mrisurv_caffeine_2_jackieedit, "Morning tea") |
+          str_detect(t3_mrisurv_caffeine_2_jackieedit, "This appointment"),
+        "day of scan",
+        NA
+        ),
+    t3_mrisurv_caffeine_2_wrangled =
+      ifelse(
+        is.na(t3_mrisurv_caffeine_2_wrangled) &
+          t3_mrisurv_caffeine_1 == "1",
+        "drinks caffeine but not today",
+        t3_mrisurv_caffeine_2_wrangled
+      ),
+    t3_mrisurv_caffeine_2_wrangled =
+      ifelse(
+        is.na(t3_mrisurv_caffeine_2_wrangled) &
+          t3_mrisurv_caffeine_1 == "0",
+        "does not drink caffeine",
+        t3_mrisurv_caffeine_2_wrangled
+      )
+  ) %>%
+  relocate(t3_mrisurv_caffeine_2_wrangled, .after = t3_mrisurv_caffeine_2_jackieedit) %>%
+  mutate(
+    t3_mrisurv_caffeine_day_of_scan =
+      ifelse(
+        t3_mrisurv_caffeine_2_wrangled == "day of scan",
+        "1",
+        "0"
+      )
+  ) %>%
+  relocate(t3_mrisurv_caffeine_day_of_scan, .after = t3_mrisurv_caffeine_2_wrangled) %>%
+  mutate(
+    t3_mrisurv_sleep_med =
+      ifelse(
+        t3_Jackie_Added_variable_commonly_used_sleep_agent == 1,
+        1,
+        0
+        ),
+    t3_mrisurv_med_general =
+      ifelse(
+        t3_mrisurv_meds == 1,
+        1,
+        0
+      )
+  ) %>%
+  dplyr::select(-t3_Jackie_Added_variable_commonly_used_sleep_agent, -t3_mrisurv_meds)
+
+# t4
+mrisurveyt4_clean_caff <-
+  mrisurveyt4_clean %>%
+  dplyr::select(
+    ELS_ID,
+    timepoint,
+    mri_survey_timestamp,
+    t4_Jackie_Added_variable_commonly_used_sleep_agent,
+    t4_mrisurv_meds,
+    starts_with("t4_mrisurv_med_"),
+    contains("caffeine"),
+    contains("sleep"),
+    exit_7___5,
+    exit_7_1,
+  ) %>%
+  mutate(
+    t4_mrisurv_caffeine_2_wrangled =
+      ifelse(
+        str_detect(t4_mrisurv_caffeine_2_jackieedit, "today") |
+          str_detect(t4_mrisurv_caffeine_2_jackieedit, "Today") |
+          str_detect(t4_mrisurv_caffeine_2_jackieedit, "This morning") |
+          str_detect(t4_mrisurv_caffeine_2_jackieedit, "this Morning") |
+            str_detect(t4_mrisurv_caffeine_2_jackieedit, "this morning") |
+            str_detect(t4_mrisurv_caffeine_2_jackieedit, "hours ago") |
+          str_detect(t4_mrisurv_caffeine_2_jackieedit, "hour ago") |
+          str_detect(t4_mrisurv_caffeine_2_jackieedit, "minutes ago") |
+          str_detect(t4_mrisurv_caffeine_2_jackieedit, "Morning tea") |
+          str_detect(t4_mrisurv_caffeine_2_jackieedit, "This appointment"),
+        "day of scan",
+        NA
+        ),
+    t4_mrisurv_caffeine_2_wrangled =
+      ifelse(
+        is.na(t4_mrisurv_caffeine_2_wrangled) &
+          t4_mrisurv_caffeine_1 == "1",
+        "drinks caffeine but not today",
+        t4_mrisurv_caffeine_2_wrangled
+      ),
+    t4_mrisurv_caffeine_2_wrangled =
+      ifelse(
+        is.na(t4_mrisurv_caffeine_2_wrangled) &
+          t4_mrisurv_caffeine_1 == "0",
+        "does not drink caffeine",
+        t4_mrisurv_caffeine_2_wrangled
+      )
+  ) %>%
+  relocate(t4_mrisurv_caffeine_2_wrangled, .after = t4_mrisurv_caffeine_2_jackieedit) %>%
+  mutate(
+    t4_mrisurv_caffeine_day_of_scan =
+      ifelse(
+        t4_mrisurv_caffeine_2_wrangled == "day of scan",
+        "1",
+        "0"
+      )
+  ) %>%
+  relocate(t4_mrisurv_caffeine_day_of_scan, .after = t4_mrisurv_caffeine_2_wrangled) %>%
+  mutate(
+    t4_mrisurv_sleep_med =
+      ifelse(
+        t4_Jackie_Added_variable_commonly_used_sleep_agent == 1,
+        1,
+        0
+        ),
+    t4_mrisurv_med_general =
+      ifelse(
+        t4_mrisurv_meds == 1,
+        1,
+        0
+      )
+  ) %>%
+  dplyr::select(-t4_Jackie_Added_variable_commonly_used_sleep_agent, -t4_mrisurv_meds)
+```
+
+### cleaning and selecting variables for sleep
+`t3_mrisurv_sleep_1` = How many hours of sleep did you get last night?	
+`t3_mrisurv_sleep_2` = Was this amount of sleep:	1, More than usual | 2, Usual | 3, Less than usual
+`exit_7___5` = During the MRI Scan, did you experience Sleepiness?  
+`exit7_1` = If yes to any of the above, please explain:  
+```{r}
+# t3
+mrisurveyt3_clean_sleep <-
+  mrisurveyt3_clean_caff %>%
+  mutate(
+    t3_mrisurv_sleep_1_wrangled = NA,
+    t3_mrisurv_sleep_1_wrangled =
+      ifelse(
+        str_detect(t3_mrisurv_sleep_1_jackieedit, "4 or 5 hours"),
+        "4.5",
+        t3_mrisurv_sleep_1_jackieedit
+        ),
+    t3_mrisurv_sleep_1_wrangled =
+      ifelse(
+        str_detect(t3_mrisurv_sleep_1_jackieedit, "6 hours, 47 min"),
+        "6.47",
+        t3_mrisurv_sleep_1_wrangled
+      ),
+     t3_mrisurv_sleep_1_wrangled =
+      ifelse(
+        str_detect(t3_mrisurv_sleep_1_jackieedit, "7-8 hours"),
+        "7.5",
+        t3_mrisurv_sleep_1_wrangled
+      ),
+    t3_mrisurv_sleep_1_wrangled =
+      ifelse(
+        str_detect(t3_mrisurv_sleep_1_jackieedit, "7.5 to 8"),
+        "7.5",
+        t3_mrisurv_sleep_1_wrangled
+      ),
+    t3_mrisurv_sleep_1_wrangled =
+      ifelse(
+        str_detect(t3_mrisurv_sleep_1_jackieedit, "Eight hours"),
+        "8",
+        t3_mrisurv_sleep_1_wrangled
+      ),
+    t3_mrisurv_sleep_1_wrangled =
+      ifelse(
+        str_detect(t3_mrisurv_sleep_1_jackieedit, "6 or 7"),
+        "6.5",
+        t3_mrisurv_sleep_1_wrangled
+      ),
+    t3_mrisurv_sleep_1_wrangled =
+      ifelse(
+        str_detect(t3_mrisurv_sleep_1_jackieedit, "6-8 I'm not sure"),
+        "7",
+        t3_mrisurv_sleep_1_wrangled
+      )
+  ) %>%
+  relocate(t3_mrisurv_sleep_1_wrangled, .after = t3_mrisurv_sleep_1_jackieedit) %>%
+  mutate(
+    t3_mrisurv_sleep_1_wrangled =
+      str_remove(t3_mrisurv_sleep_1_wrangled, "Hours"),
+    t3_mrisurv_sleep_1_wrangled =
+      str_remove(t3_mrisurv_sleep_1_wrangled, "hours"),   
+    t3_mrisurv_sleep_1_wrangled =
+      str_remove(t3_mrisurv_sleep_1_wrangled, "~"),   
+    t3_mrisurv_sleep_1_wrangled =
+      str_remove(t3_mrisurv_sleep_1_wrangled, "Around "),    
+    t3_mrisurv_sleep_1_wrangled =
+      str_remove(t3_mrisurv_sleep_1_wrangled, "Arox. "),
+    t3_mrisurv_sleep_1_wrangled =
+      str_remove(t3_mrisurv_sleep_1_wrangled, "hrs")    
+    ) %>%
+  mutate(
+    t3_mrisurv_sleep_hrs_night_before_scan = as.numeric(t3_mrisurv_sleep_1_wrangled)
+  ) %>%
+  rename(
+    t3_mrisurv_sleep_before_scan_usual = t3_mrisurv_sleep_2,
+    t3_sleepiness_during_scan = exit_7___5,
+    t3_sleepiness_notes_during_scan = exit_7_1
+  )
+
+# t4
+mrisurveyt4_clean_sleep <-
+  mrisurveyt4_clean_caff %>%
+  mutate(
+    t4_mrisurv_sleep_1_wrangled = t4_mrisurv_sleep_1_jackieedit,
+    t4_mrisurv_sleep_1_wrangled =
+      str_remove(t4_mrisurv_sleep_1_wrangled, "ish"),
+    t4_mrisurv_sleep_1_wrangled =
+      str_remove(t4_mrisurv_sleep_1_wrangled, "hours")
+    ) %>%
+  mutate(
+    t4_mrisurv_sleep_hrs_night_before_scan = as.numeric(t4_mrisurv_sleep_1_wrangled)
+  ) %>%
+  rename(
+    t4_mrisurv_sleep_before_scan_usual = t4_mrisurv_sleep_2,
+    t4_sleepiness_during_scan = exit_7___5,
+    t4_sleepiness_notes_during_scan = exit_7_1
+  )
+```
+
+
+
+# visualizations
+```{r}
+library(hms)
+```
+
+# t3
+```{r}
+mrisurveyt3_clean_time_of_scan <-
+  mrisurveyt3_clean_sleep %>%
+  dplyr::select(
+    ELS_ID,
+    timepoint,
+    mri_survey_timestamp,
+    t3_mrisurv_caffeine_day_of_scan,
+    t3_mrisurv_sleep_hrs_night_before_scan,
+    t3_mrisurv_sleep_before_scan_usual,
+    t3_sleepiness_during_scan,
+    t3_mrisurv_sleep_med,
+    t3_mrisurv_med_general,
+    t3_mrisurv_med_1,
+    t3_mrisurv_med_2,
+    t3_mrisurv_med_3,
+    t3_mrisurv_med_4,
+    t3_mrisurv_med_5
+  ) %>%
+  mutate(
+    mri_survey_timestamp_recoded = as.POSIXct(mri_survey_timestamp, format = "%m/%d/%y %H:%M", tz="America/Los_Angeles"),
+    hourofscan = 
+      as_hms(mri_survey_timestamp_recoded)
+    ) %>%
+  relocate(mri_survey_timestamp_recoded, .after = mri_survey_timestamp) %>%
+  relocate(hourofscan, .after = mri_survey_timestamp_recoded) %>%
+  rename(
+    mrisurv_caffeine_day_of_scan = t3_mrisurv_caffeine_day_of_scan,
+    mrisurv_sleep_hrs_night_before_scan = t3_mrisurv_sleep_hrs_night_before_scan,
+    mrisurv_sleep_before_scan_usual = t3_mrisurv_sleep_before_scan_usual,
+    mrisurv_sleepiness_during_scan = t3_sleepiness_during_scan,
+    mrisurv_sleep_med = t3_mrisurv_sleep_med,
+    mrisurv_med_general = t3_mrisurv_med_general,
+    mrisurv_med_1 = t3_mrisurv_med_1,
+    mrisurv_med_2 = t3_mrisurv_med_2,
+    mrisurv_med_3 = t3_mrisurv_med_3,
+    mrisurv_med_4 = t3_mrisurv_med_4,
+    mrisurv_med_5 = t3_mrisurv_med_5
+  )
+
+
+# distribution of time of scan
+timeofscanplot_t3 <- 
+  mrisurveyt3_clean_time_of_scan %>%
+  ggplot(
+    aes(x=hourofscan)
+  ) +
+  geom_freqpoly() + 
+  theme_classic() +
+  labs(
+    x = "Time of Scan",
+    title = "Distribution of Scan Time of Day"
+    ) +
+  scale_x_time(breaks = scales::breaks_width("2 hours"))
+timeofscanplot_t3
+ggsave("timeofscanplot_t3.png", timeofscanplot_t3, width = 7, height = 4.5)
+```
+
+# t4
+```{r}
+mrisurveyt4_clean_time_of_scan <-
+  mrisurveyt4_clean_sleep %>%
+  dplyr::select(
+    ELS_ID,
+    timepoint,
+    mri_survey_timestamp,
+    t4_mrisurv_caffeine_day_of_scan,
+    t4_mrisurv_sleep_hrs_night_before_scan,
+    t4_mrisurv_sleep_before_scan_usual,
+    t4_sleepiness_during_scan,
+    t4_mrisurv_sleep_med,
+    t4_mrisurv_med_general,
+    t4_mrisurv_med_1,
+    t4_mrisurv_med_2,
+    t4_mrisurv_med_3,
+    t4_mrisurv_med_4,
+    t4_mrisurv_med_5
+  ) %>%
+  mutate(
+    mri_survey_timestamp_recoded = as.POSIXct(mri_survey_timestamp, format = "%m/%d/%y %H:%M", tz="America/Los_Angeles"),
+    hourofscan = 
+      as_hms(mri_survey_timestamp_recoded)
+    ) %>%
+  relocate(mri_survey_timestamp_recoded, .after = mri_survey_timestamp) %>%
+  relocate(hourofscan, .after = mri_survey_timestamp_recoded) %>%
+  rename(
+    mrisurv_caffeine_day_of_scan = t4_mrisurv_caffeine_day_of_scan,
+    mrisurv_sleep_hrs_night_before_scan = t4_mrisurv_sleep_hrs_night_before_scan,
+    mrisurv_sleep_before_scan_usual = t4_mrisurv_sleep_before_scan_usual,
+    mrisurv_sleepiness_during_scan = t4_sleepiness_during_scan,
+    mrisurv_sleep_med = t4_mrisurv_sleep_med,
+    mrisurv_med_general = t4_mrisurv_med_general,
+    mrisurv_med_1 = t4_mrisurv_med_1,
+    mrisurv_med_2 = t4_mrisurv_med_2,
+    mrisurv_med_3 = t4_mrisurv_med_3,
+    mrisurv_med_4 = t4_mrisurv_med_4,
+    mrisurv_med_5 = t4_mrisurv_med_5    
+  )
+
+# distribution of time of scan
+timeofscanplot_t4 <- 
+  mrisurveyt4_clean_time_of_scan %>%
+  ggplot(
+    aes(x=hourofscan)
+  ) +
+  geom_freqpoly() + 
+  theme_classic() +
+  labs(
+    x = "Time of Scan",
+    title = "Distribution of Scan Time of Day"
+    ) +
+  scale_x_time(breaks = scales::breaks_width("2 hours"))
+timeofscanplot_t4
+ggsave("timeofscanplot_t4.png", timeofscanplot_t4, width = 7, height = 4.5)
+```
+
+## binding rows
+```{r}
+scan_covariates <- bind_rows(
+  mrisurveyt3_clean_time_of_scan,
+  mrisurveyt4_clean_time_of_scan
+  )
+```
+
+## write csv
+```{r}
+write_csv(scan_covariates, "scan_covariates.csv")
+```
+

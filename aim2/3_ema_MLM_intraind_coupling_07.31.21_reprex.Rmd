@@ -1,0 +1,774 @@
+---
+title: "2_ema_MLM_intraind_coupling_07.31.21"
+author: "Jackie"
+date: "7/31/2021"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+# Libraries
+
+```{r, message=FALSE}
+library(tidyverse)
+library(modelr)
+library(chron)
+library(hms)
+library(lubridate)
+library(bootnet)
+library(DataCombine)
+library(EMAtools)
+library(lme4)
+library(sjPlot)
+library(sjstats)
+library(assertthat)
+library(pmdplyr)
+library(effectsize)
+library(tidyverse)
+library(dplyr)
+library(naniar)
+library(data.table)
+library(entropy)
+library(psych)
+library(reprex)
+```
+
+## functions
+```{r}
+getmode <- function(v, na.rm=TRUE) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+# function from ben bolker
+mylag <- function(x,lag) {
+  c(rep(NA,lag),head(x,-lag))
+}
+```
+
+# Read in data
+> Read in "loading_reproducible_df.R" to load in dataframe or
+
+
+```{r, message=FALSE}
+emadffp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/ema_for_analysis.csv"
+emadf <- read_csv(emadffp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  drop_na(pos_total)
+```
+
+
+```{r, message=FALSE}
+mw_merge_restruct <-
+  emadf %>% # grouping the data by person so that varialbes are lagged appropriately
+  group_by(
+    ELS_ID
+  )
+
+# sleepsat_t+1 (with respect to neg_total_evecurrent and pos_total_evecurrent, time t)
+mw_merge_restruct$sleepsat.lag_nextmorn <- slide(mw_merge_restruct, Var = "DailySleep_satisfaction", GroupVar = "ELS_ID", slideBy = 1)[,36]
+
+# sleephrs_t+1 (with respect to neg_total_evecurrent and pos_total_evecurrent, time t)
+mw_merge_restruct$sleephrs.lag_nextmorn <- slide(mw_merge_restruct, Var = "DailySleep_hrs_rec", GroupVar = "ELS_ID", slideBy = 1)[,37]
+
+# neg_t+1 (with respect to neg_total_evecurrent and pos_total_evecurrent, time t)
+mw_merge_restruct$neg.lag_nextmorn <- slide(mw_merge_restruct, Var = "neg_total", GroupVar = "ELS_ID", slideBy = 1)[,38]
+
+# pos_t+1 (with respect to neg_total_evecurrent and pos_total_evecurrent, time t)
+mw_merge_restruct$pos.lag_nextmorn <- slide(mw_merge_restruct, Var = "pos_total", GroupVar = "ELS_ID", slideBy = 1)[,39]
+
+# neg_t+2 (with respect to neg_total_evecurrent and pos_total_evecurrent, time t)
+mw_merge_restruct$neg.lag_nextnoon <- slide(mw_merge_restruct, Var = "neg_total", GroupVar = "ELS_ID", slideBy = 2)[,40]
+
+# pos_t+2n (with respect to neg_total_evecurrent and pos_total_evecurrent, time t)
+mw_merge_restruct$pos.lag_nextnoon <- slide(mw_merge_restruct, Var = "pos_total", GroupVar = "ELS_ID", slideBy = 2)[,41]
+
+# neg_t+3 (with respect to neg_total_evecurrent and pos_total_evecurrent, time t)
+mw_merge_restruct$neg.lag_nexteve <- slide(mw_merge_restruct, Var = "neg_total", GroupVar = "ELS_ID", slideBy = 3)[,42]
+
+# pos_t+3 (with respect to neg_total_evecurrent and pos_total_evecurrent, time t)
+mw_merge_restruct$pos.lag_nexteve <- slide(mw_merge_restruct, Var = "pos_total", GroupVar = "ELS_ID", slideBy = 3)[,43]
+
+# renaming 
+mw_merge_restruct_rename <-
+  mw_merge_restruct %>%
+  rename(
+    neg_total_evecurrent = neg_total,
+    pos_total_evecurrent = pos_total
+  ) %>%
+  drop_na(sleepsat.lag_nextmorn) %>%
+  dplyr::select(-DailySleep_satisfaction, -DailySleep_hrs_rec)
+
+```
+
+In these types of data sampling situations (different frequency of assessment) – the typical solution for examination of coupling seems to be to aggregate to a common time-sampling frame (e.g., day-level) and locate coupling at that timescale.
+
+Bc my design was such that participants report their evening affect and next day sleep satisfactionj
+
+> Variables are lagged with respedct to the first evening prompt so that I can temporally "predict" _next_ morning sleep satisfaction, and affect. For more detail:
+> Data are structured such that over the span of 2 weeks participants respond to prompts 3 times a day (Morn, Noon, Eve). I'm coding these evening affect variables as `neg_total_evecurrent` and `pos_total_evecurrent` (time _t_). I'm coding the following morning sleep variables as `sleepsat.lag_nextmorn` and `sleephrs.lag_nextmorn` (time _t+1_) and the morning affect variables as `neg.lag_nextmorn` and `pos.lag_nextmorn` (time _t+1_). The afternoon affect variables are coded as `neg.lag_nextnoon` (time _t+2_) and `pos.lag_nextnoon` (time _t+2_)and the evening affect variables are coded as `neg.lag_nexteve` and `pos.lag_nexteve` (time _t+3_).
+
+
+> the suffix "_mw" or "_act" indicates whether that Tanner assessemnt was administered closer to the actigraphy or EMA data. 154 participants had usable actigraphy or EMA data; however, 6 participants were excluded based on being in early puberty (Tanner stage < 3), bringing our total to 148 participants. 136 had usable actigraphy data and 111 had usable EMA data via Metricwire data. 54% of our sample (N=80) completed actigraphy and EMA components simultaneously (overlapping at least 7 days). This was not by design, but because of participant scheduling/contacting issues or bc of participant issues, the other half of the participants either completed both components several months apart from each other, _or_ they completed only one of the componets (either EMA _or_ actigraphy due to various reasons (e.g., didn't want to wear a watch, didn't want the app on their phones, data from one component wasn't usable, etc...)).
+To include as many participants as possible in our analyses (to increase generalizability and statistical power), we conducted the EMA and actigraphy analyses separately.
+
+# Start Analysis (for EMA only right now)
+
+## describe variables of interest
+```{r}
+# NA
+describe(mw_merge_restruct_rename$neg_total_evecurrent) # current evening NA
+describe(mw_merge_restruct_rename$neg.lag_nextmorn) # next morn NA
+describe(mw_merge_restruct_rename$neg.lag_nextnoon) # next afternoon NA
+describe(mw_merge_restruct_rename$neg.lag_nexteve) # next evening NA
+# PA
+describe(mw_merge_restruct_rename$pos_total_evecurrent) # current evening PA
+describe(mw_merge_restruct_rename$pos.lag_nextmorn) # next morn PA
+describe(mw_merge_restruct_rename$pos.lag_nextnoon) # next afternoon PA
+describe(mw_merge_restruct_rename$pos.lag_nexteve) # next evening PA
+# sleep sat
+describe(mw_merge_restruct_rename$sleepsat.lag_nextmorn) # next morn sleep sat
+# sleep hrs
+describe(mw_merge_restruct_rename$sleephrs.lag_nextmorn) # next morn sleep hrs (duration)
+```
+
+## histograms
+```{r}
+library(hrbrthemes)
+library(viridis)
+library(forcats)
+vars <- c("neg_total_evecurrent", "neg.lag_nextmorn", "neg.lag_nextnoon", "neg.lag_nexteve", "pos_total_evecurrent", "pos.lag_nextmorn", "pos.lag_nextnoon", "pos.lag_nexteve", "sleepsat.lag_nextmorn", "sleephrs.lag_nextmorn")
+mw_merge_order_dem_all_long <-
+  mw_merge_restruct_rename %>%
+  rename(
+    `PM NA (t)` = neg_total_evecurrent,
+    `AM NA (t+1)` = neg.lag_nextmorn,
+    `Noon NA (t+2)`= neg.lag_nextnoon,
+    `PM NA (t+3)` = neg.lag_nexteve,
+    `PM PA (t)` = pos_total_evecurrent,
+    `AM PA (t+1)` = pos.lag_nextmorn,
+    `Noon PA (t+2)`= pos.lag_nextnoon,
+    `PM PA (t+3)` = pos.lag_nexteve,  
+    `AM Sleep Sat (t+1)` = sleepsat.lag_nextmorn
+  ) %>%
+  group_by(ELS_ID) %>%
+  gather(
+    construct,
+    value,
+    `PM NA (t)`, `AM NA (t+1)`, `Noon NA (t+2)`, `PM NA (t+3)`, `PM PA (t)`, `AM PA (t+1)`, `Noon PA (t+2)`, `PM PA (t+3)`, `AM Sleep Sat (t+1)` 
+  )
+
+mw_merge_order_dem_all_long %>%
+  ggplot(
+    aes(
+      x = as.numeric(value),
+      color = construct,
+      fill = construct
+    )
+  ) +
+  geom_histogram(alpha=0.6, bindwidth = .5) +
+  scale_fill_viridis(discrete=TRUE) +
+  scale_color_viridis(discrete=TRUE) +
+  theme_ipsum() +
+  theme(
+    legend.position="none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8)
+    ) +
+  xlab("") +
+  ylab("Count") +
+  facet_wrap(~construct) + 
+  theme_classic() +
+  theme(
+    legend.text = element_text(size = 10)
+  )
+ggsave("hist_laggedvars.png", width = 7, height = 7)  
+```
+
+## re-coding day_id
+```{r}
+library(lubridate)
+mw_merge_order_dem_all_re <-
+  mw_merge_restruct_rename %>%
+  mutate(
+    triggerdate = ymd(triggerdate),
+    day = day(triggerdate)
+  ) %>%
+  group_by(ELS_ID) %>% 
+  mutate(
+    day_idx =  time_variable(triggerdate, .method = "day")
+    # dayorder = order(triggerdate),
+    # dayorder = as.numeric(dayorder),
+    # respnumber = dayorder - min(dayorder) + 0,
+    # day_idx = dayx_id - min(day_idx) + 0
+    ) %>%
+  relocate(day_idx, .after = day)
+```
+
+# Step 1: Empty Model
+
+Random effect of subject says that level 1 observations are grouped by this ELS_ID level 2 variable 
+```{r}
+empty_mod_sleep <- lmer(sleepsat.lag_nextmorn ~ 1 + (1 | ELS_ID), data = mw_merge_order_dem_all_re)
+summary(empty_mod_sleep)
+
+# computing ICC
+RandEff <- as_tibble(VarCorr(empty_mod_sleep)) # Next, compute the ICC. It is the ratio of the random intercept variance (between-person var) over the total variance (between + within var):
+ICC_btwn <- RandEff[1,4]/(RandEff[1,4]+RandEff[2,4])  # 0.4671538
+# From the unconditional means model, the ICC was calculated, which indicated that of the total variance in negative affect, 0.5328462 is attributable to between-person variation whereas 0.598993 is attributable to within-person variation. This means there is a good portion of within-person variance to model using time-varying predictor.
+
+empty_mod_sleephrs <- lmer(sleephrs.lag_nextmorn ~ 1 + (1 | ELS_ID), data = mw_merge_order_dem_all_re)
+summary(empty_mod_sleephrs)
+RandEffhrs <- as_tibble(VarCorr(empty_mod_sleephrs)) 
+ICC_btwnhrs <- RandEffhrs[1,4]/(RandEffhrs[1,4]+RandEffhrs[2,4]) # 0.4787737
+
+empty_mod_na <- lmer(neg_total_evecurrent ~ 1 + (1 | ELS_ID), data = mw_merge_order_dem_all_re)
+summary(empty_mod_na)
+RandEffna <- as_tibble(VarCorr(empty_mod_na)) 
+ICC_btwnna <- RandEffna[1,4]/(RandEffna[1,4]+RandEffna[2,4])  # 0.6104543
+
+empty_mod_pa <- lmer(pos_total_evecurrent ~ 1 + (1 | ELS_ID), data = mw_merge_order_dem_all_re)
+summary(empty_mod_pa)
+RandEffpa <- as_tibble(VarCorr(empty_mod_pa)) 
+ICC_btwnpa <- RandEffpa[1,4]/(RandEffpa[1,4]+RandEffpa[2,4])  # 0.4936754
+```
+
+# Step 2: Level 1 Models
+> setting up MLM variables to distinguish between vs. within person variance
+
+```{r}
+library(plyr)
+library(reshape2)
+df <- ddply(
+  mw_merge_order_dem_all_re,
+  "ELS_ID", 
+  summarize,
+  imean.dailysleepsat =mean(sleepsat.lag_nextmorn, na.rm=TRUE),
+  imean.dailysleephrs =mean(sleephrs.lag_nextmorn, na.rm=TRUE),
+  imean.neg_total_evecurrent = mean(neg_total_evecurrent, na.rm = TRUE),
+  imean.pos_total_evecurrent = mean(pos_total_evecurrent, na.rm = TRUE),
+  imean.neg.lag_nextmorn = mean(neg.lag_nextmorn, na.rm = TRUE),  
+  imean.pos.lag_nextmorn = mean(pos.lag_nextmorn, na.rm = TRUE),     
+  imean.neg.lag_nextnoon = mean(neg.lag_nextnoon, na.rm = TRUE),
+  imean.pos.lag_nextnoon = mean(pos.lag_nextnoon, na.rm = TRUE),
+  imean.neg.lag_nexteve = mean(neg.lag_nexteve, na.rm = TRUE),    
+  imean.pos.lag_nexteve = mean(pos.lag_nexteve, na.rm = TRUE)
+)
+
+#Calculating sample-centered versions *Note that this is done in a person-level data file.
+df$dailysleepsat.c <- scale(df$imean.dailysleepsat,center=TRUE,scale=FALSE)
+df$dailysleephrs.c <- scale(df$imean.dailysleephrs,center=TRUE,scale=FALSE)
+df$neg_total_evecurrent.c <- scale(df$imean.neg_total_evecurrent,center=TRUE,scale=FALSE)
+df$pos_total_evecurrent.c <- scale(df$imean.pos_total_evecurrent,center=TRUE,scale=FALSE)
+df$neg.lag_nextmorn.c <- scale(df$imean.neg.lag_nextmorn,center=TRUE,scale=FALSE)
+df$pos.lag_nextmorn.c <- scale(df$imean.pos.lag_nextmorn,center=TRUE,scale=FALSE)
+df$neg.lag_nextnoon.c <- scale(df$imean.neg.lag_nextnoon,center=TRUE,scale=FALSE)
+df$pos.lag_nextnoon.c <- scale(df$imean.pos.lag_nextnoon,center=TRUE,scale=FALSE)
+df$neg.lag_nexteve.c <- scale(df$imean.neg.lag_nexteve,center=TRUE,scale=FALSE)
+df$pos.lag_nexteve.c <- scale(df$imean.pos.lag_nexteve,center=TRUE,scale=FALSE)
+describe(df)
+
+#merging "trait" scores back into the *long* data file and calculate "state" scores.
+ema_mlm_df <- merge(mw_merge_order_dem_all_re,df,by="ELS_ID")
+ema_mlm_df$dailysleepsat.state <- ema_mlm_df$sleepsat.lag_nextmorn - ema_mlm_df$imean.dailysleepsat
+
+ema_mlm_df$dailysleephrs.state <- ema_mlm_df$sleephrs.lag_nextmorn - ema_mlm_df$imean.dailysleephrs
+
+ema_mlm_df$neg_total_evecurrent.state <- ema_mlm_df$neg_total_evecurrent - ema_mlm_df$imean.neg_total_evecurrent
+
+ema_mlm_df$pos_total_evecurrent.state <- ema_mlm_df$pos_total_evecurrent - ema_mlm_df$imean.pos_total_evecurrent
+
+ema_mlm_df$neg.lag_nextmorn.state <- ema_mlm_df$neg.lag_nextmorn - ema_mlm_df$imean.neg.lag_nextmorn
+
+ema_mlm_df$pos.lag_nextmorn.state <- ema_mlm_df$pos.lag_nextmorn - ema_mlm_df$imean.pos.lag_nextmorn
+
+ema_mlm_df$neg.lag_nextnoon.state <- ema_mlm_df$neg.lag_nextnoon - ema_mlm_df$imean.neg.lag_nextnoon
+
+ema_mlm_df$pos.lag_nextnoon.state <- ema_mlm_df$pos.lag_nextnoon - ema_mlm_df$imean.pos.lag_nextnoon
+
+ema_mlm_df$neg.lag_nexteve.state <- ema_mlm_df$neg.lag_nexteve - ema_mlm_df$imean.neg.lag_nexteve
+
+ema_mlm_df$pos.lag_nexteve.state <- ema_mlm_df$pos.lag_nexteve - ema_mlm_df$imean.pos.lag_nexteve
+```
+
+```{r}
+n <-
+  ema_mlm_df %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  dplyr::count(ELS_ID)
+
+# # create a list of sequences
+# my_list <- lapply(n$n, seq) 
+# 
+# # bind the collapsed list back onto your df
+# ema_mlm_df$day_seq <- do.call(c, my_list)
+
+ema_mlm_df2 <-
+  ema_mlm_df %>%
+  # relocate(day_seq, .after = day) %>%
+  group_by(ELS_ID) %>%
+  mutate(
+    dayorder = day_idx- 1
+  ) %>%
+  relocate(dayorder, .after = day_idx)
+```
+
+> As a reminder, the "raw" data variables are    
+`neg_total_evecurrent` (time _t_ affect),  
+`pos_total_evecurrent` (time _t_ affect),  
+`sleepsat.lag_nextmorn` (time _t+1_ sleep),  
+`sleephrs.lag_nextmorn` (time _t+1_ sleep),   
+`neg.lag_nextmorn` (time _t+1_ affect),   
+`pos.lag_nextmorn` (time _t+1_ affect),  
+`neg.lag_nextnoon` (time _t+2_ affect),  
+`pos.lag_nextnoon` (time _t+2_ affect),  
+`neg.lag_nexteve` (time _t+3_ affect),   
+`pos.lag_nexteve` (time _t+3_ affect)
+
+> The "state-level" variables are (= "negaff.state" in Nilam's tutorial)  
+`NA_evecurrent.state` (time _t_ affect),  
+`PA_evecurrent.state` (time _t_ affect),  
+`dailysleepsat.state` (time _t+1_ sleep),  
+`dailysleephrs.state` (time _t+1_ sleep),   
+`NA_nextmorn.state` (time _t+1_ affect),   
+`PA_nextmorn.state` (time _t+1_ affect),  
+`NA_nextnoon.state` (time _t+2_ affect),  
+`PA_nextnoon.state` (time _t+2_ affect),  
+`NA_nexteve.state` (time _t+3_ affect),   
+`PA_nexteve.state` (time _t+3_ affect)
+
+> The sample-centered variables "imean.negaff.c" centered trait-like variables?
+`NA_evecurrent.c` (time _t_ affect),  
+`PA_evecurrent.c` (time _t_ affect),  
+`dailysleepsat.c` (time _t+1_ sleep),  
+`dailysleephrs.c` (time _t+1_ sleep),   
+`NA_nextmorn.c` (time _t+1_ affect),   
+`PA_nextmorn.c` (time _t+1_ affect),  
+`NA_nextnoon.c` (time _t+2_ affect),  
+`PA_nextnoon.c` (time _t+2_ affect),  
+`NA_nexteve.c` (time _t+3_ affect),   
+`PA_nexteve.c` (time _t+3_ affect)
+
+> `dayorder` indicates "day trend" 
+
+## Level 1 NA: FE and RE of Day
+Is there a fixed or random effect of day?
+```{r}
+library(lmerTest)
+# DV: negative affect (NA)
+level1modna_onlyday1 <- lmer(neg_total_evecurrent ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+tab_model(level1modna_onlyday1 , p.val = "kr") # day  sig
+level1modna_onlyday2 <- lmer(neg.lag_nextmorn ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+tab_model(level1modna_onlyday2, p.val = "kr") # day  sig
+level1modna_onlyday3 <- lmer(neg.lag_nextnoon ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+tab_model(level1modna_onlyday3, p.val = "kr") # day sig
+level1modna_onlyday4<- lmer(neg.lag_nexteve ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+tab_model(level1modna_onlyday4, p.val = "kr") # day not sig
+
+level1modna_onlydayslp1 <- lmer(neg_total_evecurrent ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modna_onlydayslp1)
+# margina leffect of day
+level1modna_onlydayslp2 <- lmer(neg.lag_nextmorn ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modna_onlydayslp2)
+#marginal effect of day
+level1modna_onlydayslp3 <- lmer(neg.lag_nextnoon ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modna_onlydayslp3)
+# no effect of day
+level1modna_onlydayslp4<- lmer(neg.lag_nexteve ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modna_onlydayslp4)
+# no effedct of day
+
+
+anova(level1modna_onlyday1, level1modna_onlydayslp1) # predicting current NA - slope model  better 
+anova(level1modna_onlyday2, level1modna_onlydayslp2) # predicitng next morning NA -  slope model better 
+anova(level1modna_onlyday3, level1modna_onlydayslp3) # predicitng next afternoon NA -  slope model better 
+anova(level1modna_onlyday4, level1modna_onlydayslp4) # predicitng next evening NA -  slope model better 
+```
+
+> include random effect of day.
+
+
+## Level 1 PA: Fe and RE of Day
+```{r}
+# DV: positive affect
+level1modpa_onlyday1 <- lmer(pos_total_evecurrent ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+summary(level1modpa_onlyday1) # day  marginal
+level1modpa_onlyday2 <- lmer(pos.lag_nextmorn ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+summary(level1modpa_onlyday2) # day not sig
+level1modpa_onlyday3 <- lmer(pos.lag_nextnoon ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+summary(level1modpa_onlyday3) # day not sig
+level1modpa_onlyday4<- lmer(pos.lag_nexteve ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+summary(level1modpa_onlyday4) # day sig
+
+level1modpa_onlydayslp1 <- lmer(pos_total_evecurrent ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modpa_onlydayslp1)
+# no effect of day
+level1modpa_onlydayslp2 <- lmer(pos.lag_nextmorn ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modpa_onlydayslp2)
+# failed to converge
+level1modpa_onlydayslp3 <- lmer(pos.lag_nextnoon ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modpa_onlydayslp3)
+# no effect of day
+level1modpa_onlydayslp4<- lmer(pos.lag_nexteve ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modpa_onlydayslp4)
+# failed to converge
+
+
+anova(level1modpa_onlyday1, level1modpa_onlydayslp1) # predicting current pa - slope model  better 
+anova(level1modpa_onlyday2, level1modpa_onlydayslp2) # predicitng next morning pa -  intercept model better  bc slope failed to cnverge
+anova(level1modpa_onlyday3, level1modpa_onlydayslp3) # predicitng next afternoon pa -  slope model better 
+anova(level1modpa_onlyday4, level1modpa_onlydayslp4) # predicitng next evening pa -  intercpet model better  bc slope failed to converge
+```
+
+> If DV is current or next evening PA, then include FE of respnumber. Otherwise, don't need to include FE of respnumber. If DV is current evening PA, then include random slope of respnumber. Otherwise just use random intercept of ID.
+
+## Level 1 Sleep Sat: Fe and RE of Day
+```{r}
+# DV: sleep satisfaction
+level1modslsat_onlyday1 <- lmer(sleepsat.lag_nextmorn ~  dayorder +  (1 | ELS_ID), data = ema_mlm_df2)
+summary(level1modslsat_onlyday1) # day not sig
+
+
+level1modslsat_onlydayslp1 <- lmer(sleepsat.lag_nextmorn ~  dayorder + (1 + dayorder | ELS_ID), data = ema_mlm_df2) 
+summary(level1modslsat_onlydayslp1)
+# no effect of day
+
+
+anova(level1modslsat_onlyday1, level1modslsat_onlydayslp1) # predicting  next morning sleep satisfaction - slope model  better 
+```
+
+> If DV is next morning sleep sat, then no need to include FE of respnumber. However, the random slope model was a slighlty better fit, so would include random slope of respnumber.
+
+## For Level 2 Models
+time-stable variables (e.g., tanner)
+
+### creating centered variables
+
+```{r}
+#  converting sex, covid to factor; standardizing sumsev type; standardizing tanner, bmi, and age within each sex
+# make sure to ungroup the data by ELS_ID
+ema_mlm_df2_cent <-
+  ema_mlm_df2 %>%
+  dplyr::select(
+    -c(ends_with("_act"), ends_with("_ACT"))
+  ) %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_MW = factor(COVID_AHC_MW),
+    sumsev_type_z = scale(sumsev_type),
+    cmep_total_mw_z = scale(cmep_total_mw),
+    asq_total_mw_z = scale(asq_total_mw)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_average_for_mw_z = scale(tanner_average_for_mw), # standardizing tanner average within each sex
+    tanner_adrenal_mw_z = scale(tanner_adrenal_mw), # standardizing tanner adrenal within each sex
+    tanner_gonadal_mw_z = scale(tanner_gonadal_mw), # standardizing tnaner gonadal within each sex
+    bmi_at_mw_z = scale(BMI_MW), # standardizing bmi within each sex
+    tanner_age_for_mw_z = scale(tanner_age_for_mw) # standardizing age within each sex
+  ) %>%
+  ungroup() # ungrouping by person.
+
+```
+
+From Nilam tutorial: 
+"Basically, this is a cross-lag panel model - except that we are working with diary data, and that means we can prioritize within-person associations."
+
+### setting up for changing ids
+```{r}
+i <- 6
+p1 <- ggplot(
+  data = 
+    subset(ema_mlm_df2_cent, as.numeric(ELS_ID) <=i), 
+  aes(x=dayorder, group=ELS_ID), legend=FALSE) +
+  #geom_rect(mapping=aes(xmin=day-.5, xmax=day+.5, ymin=0, ymax=10, fill=wrkstrscw), alpha=0.6) +
+  geom_point(aes(x=dayorder,y = sleepsat.lag_nextmorn), color="blue",  size=1) +
+  geom_line(aes(x=dayorder,y = sleepsat.lag_nextmorn), color="blue", lty=1, size=1) +
+  geom_point(aes(x=dayorder,y = neg.lag_nextmorn), color="red",  size=1, alpha = .6) +
+  geom_line(aes(x=dayorder,y = neg.lag_nextmorn), color="red", lty=1, size=1, alpha = .6) +    
+  geom_point(aes(x=dayorder,y = pos.lag_nextmorn), color="gold",  size=1, alpha = .6) +
+  geom_line(aes(x=dayorder,y = pos.lag_nextmorn), color="gold", lty=1, size=1, alpha = .6) +    
+  xlab("Day") + 
+  ylab("Ratings of Affect (Pos = Yellow, Neg = Red) and Sleep Sat (Blue)") + ylim(1,100) +
+  scale_x_continuous(breaks=seq(0,14,by=2)) + 
+  facet_wrap( ~ ELS_ID) +
+  theme_classic() +
+  theme(
+    axis.title.y =element_text(size = 8)
+  )
+  
+ggsave("morning_sleep_and_affect_individ_coupling.png", height = 5, width = 7)
+
+
+
+i <- 6
+p2 <- ggplot(
+  data = 
+    subset(ema_mlm_df2_cent, as.numeric(ELS_ID) <=i), 
+  aes(x=dayorder, group=ELS_ID), legend=FALSE) +
+  #geom_rect(mapping=aes(xmin=day-.5, xmax=day+.5, ymin=0, ymax=10, fill=wrkstrscw), alpha=0.6) +
+  geom_point(aes(x=dayorder,y = sleepsat.lag_nextmorn), color="blue",  size=1) +
+  geom_line(aes(x=dayorder,y = sleepsat.lag_nextmorn), color="blue", lty=1, size=1) +
+  geom_point(aes(x=dayorder,y = neg_total_evecurrent), color="red",  size=1, alpha = .6) +
+  geom_line(aes(x=dayorder,y = neg_total_evecurrent), color="red", lty=1, size=1, alpha = .6) +    
+  geom_point(aes(x=dayorder,y = pos_total_evecurrent), color="gold",  size=1, alpha = .6) +
+  geom_line(aes(x=dayorder,y = pos_total_evecurrent), color="gold", lty=1, size=1, alpha = .6) +    
+  xlab("Day") + 
+  ylab("Ratings of Affect (Pos = Yellow, Neg = Red) and Sleep Sat (Blue)") + ylim(1,100) +
+  scale_x_continuous(breaks=seq(0,14,by=2)) + 
+  facet_wrap( ~ ELS_ID) +
+  theme_classic() +
+  theme(
+    axis.title.y =element_text(size = 8)
+  )
+library(gridExtra)
+library(cowplot)
+pana_dist <- 
+  cowplot::plot_grid(
+    p1, 
+    p2,
+    labels = c('A', 'B'), 
+    label_size = 10
+    )
+ggsave("morning_sleep_and_previousevening_affect_individ_coupling.png", pana_dist, width = 8, height = 4)
+```
+
+#### selecting variables for next modeling stage
+```{r}
+names(ema_mlm_df2_cent)
+ 
+ema_mlm_df2_cent.new <-
+  ema_mlm_df2_cent %>%
+  dplyr::select(
+    ELS_ID, 
+    dayorder,
+    neg_total_evecurrent,
+    pos_total_evecurrent,
+    sleepsat.lag_nextmorn,
+    sleephrs.lag_nextmorn, 
+    neg.lag_nextmorn,
+    pos.lag_nextmorn,
+    neg.lag_nextnoon,
+    pos.lag_nextnoon,
+    neg.lag_nexteve,
+    pos.lag_nexteve,
+    imean.dailysleepsat,
+    imean.neg_total_evecurrent,
+    imean.pos_total_evecurrent,
+    imean.neg.lag_nextmorn,
+    imean.pos.lag_nextmorn,
+    imean.neg.lag_nextnoon,
+    imean.pos.lag_nextnoon,
+    imean.neg.lag_nexteve,
+    imean.pos.lag_nexteve,
+    dailysleepsat.c,
+    neg_total_evecurrent.c,
+    pos_total_evecurrent.c,
+    neg.lag_nextmorn.c,
+    pos.lag_nextmorn.c,
+    neg.lag_nextnoon.c,
+    pos.lag_nextnoon.c,
+    neg.lag_nexteve.c,
+    pos.lag_nexteve.c,
+    dailysleepsat.state,
+    neg_total_evecurrent.state,
+    pos_total_evecurrent.state,
+    neg.lag_nextmorn.state,
+    pos.lag_nextmorn.state,
+    neg.lag_nextnoon.state,
+    pos.lag_nextnoon.state,
+    neg.lag_nexteve.state,
+    pos.lag_nexteve.state,
+    tanner_average_for_mw_z,
+    tanner_average_for_mw,
+    tanner_age_for_mw_z,
+    tanner_age_for_mw,
+    cmep_total_mw_z,
+    bmi_at_mw_z,
+    asq_total_mw_z,
+    aDMN_Z_36R,
+    pDMN_Z_36R
+  )
+
+```
+
+
+# Step 3: The MLM
+> including level 1 and 2 variables
+
+## Answering the question, does Tanner (pubertal) stage moderate inter- or intra-individual coupling morning reported sleep satisfaction and morning NA accounting for last evening NA?
+```{r}
+library(nlme)
+model1.fit <-
+  lme(
+    fixed = sleepsat.lag_nextmorn
+       ~
+      1 + neg.lag_nextmorn.state*tanner_average_for_mw_z + neg.lag_nextmorn.c*tanner_average_for_mw_z  + dayorder + tanner_age_for_mw_z +  pos.lag_nextmorn.state + pos.lag_nextmorn.c + dayorder,
+    random = 
+      ~ 1 + neg.lag_nextmorn.state  + neg.lag_nextmorn.c | ELS_ID,
+    # weights = varIdent() I don't think I need this bc all varaibles are on same row (current evening, next morning prompt all on same row)
+    corr = corAR1(),
+    data = ema_mlm_df2_cent.new,
+    na.action = na.exclude
+  )
+summary(model1.fit)
+
+model2.fit <-
+  lme(
+    fixed = sleepsat.lag_nextmorn
+       ~
+      1 + pos.lag_nextmorn.state*tanner_average_for_mw_z + pos.lag_nextmorn.c*tanner_average_for_mw_z  + dayorder + tanner_age_for_mw_z +  neg.lag_nextmorn.state + neg.lag_nextmorn.c + dayorder,
+    random = 
+      ~ 1 + pos.lag_nextmorn.state | ELS_ID,
+    # weights = varIdent() I don't think I need this bc all varaibles are on same row (current evening, next morning prompt all on same row)
+    corr = corAR1(),
+    data = ema_mlm_df2_cent.new,
+    na.action = na.exclude
+  )
+summary(model2.fit)
+
+
+model3.fit <-
+  lme(
+    fixed = 
+      1 + sleepsat.lag_nextmorn ~
+      neg_total_evecurrent.state*tanner_average_for_mw_z + neg_total_evecurrent.c*tanner_average_for_mw_z + tanner_age_for_mw_z + neg.lag_nextmorn.state + neg.lag_nextmorn.c+ pos.lag_nextmorn.c + pos.lag_nextmorn.state + dayorder,
+    random = 
+      ~ 1 + neg_total_evecurrent.state + neg_total_evecurrent.c | ELS_ID,
+    # weights = varIdent() I don't think I need this bc all varaibles are on same row (current evening, next morning prompt all on same row)
+    corr = corAR1(),
+    data = ema_mlm_df2_cent.new,
+    na.action = na.exclude
+  )
+summary(model3.fit)
+
+model4.fit <-
+  lme(
+    fixed = 
+      1 + sleepsat.lag_nextmorn ~
+      pos_total_evecurrent.state*tanner_average_for_mw_z + pos_total_evecurrent.c*tanner_average_for_mw_z + tanner_age_for_mw_z + pos.lag_nextmorn.state + pos.lag_nextmorn.c+ neg.lag_nextmorn.c + neg.lag_nextmorn.state,
+    random = 
+      ~ 1 + pos_total_evecurrent.state + pos_total_evecurrent.c | ELS_ID,
+    # weights = varIdent() I don't think I need this bc all varaibles are on same row (current evening, next morning prompt all on same row)
+    corr = corAR1(),
+    data = ema_mlm_df2_cent.new,
+    na.action = na.exclude
+  )
+summary(model4.fit)
+
+
+```
+
+### plotting association between morning sleep sat and morning NA moderated by Tanner
+```{r}
+# library(effects)
+# describe(ema_mlm_df2_cent.new$tanner_average_for_mw_z) #for standard deviations (1)
+# ef1 <- effect(term="tanner_average_for_mw_z:dailysleepsat.c", xlevels= list(tanner_average_for_mw_z=c(-1, 1)), mod=model1.fit)
+# efdata1<-as.data.frame(ef1) #convert the effects list to a data frame
+# efdata1 #print effects data frame
+# efdata1$tanner_average_for_mw_z<-as.factor(efdata1$tanner_average_for_mw_z)
+# efdata1 %>%
+#   ggplot(
+#     aes(
+#       x=scale(dailysleepsat.c), y=fit, color=tanner_average_for_mw_z,group=tanner_average_for_mw_z)) + 
+#     geom_point() + 
+#     geom_line(size=1.2) +
+#     geom_ribbon(aes(ymin=fit-se, ymax=fit+se, fill=tanner_average_for_mw_z),alpha=0.3) + 
+#     labs(title = "Coupling between Reported Sleep Satisfaction and Morning Negative Affect", x= "Trait-level NA", y="Sleep Satisfaction", color="Pubertal Stage", fill="Pubertal Stage") + theme_classic() + theme(text=element_text(size=10))
+```
+
+> Conclusion: Seems like my hypthesis is not supported. Tanner does nto moderate the within- or between-person associations between affect and sleep
+
+## probing the interaction
+I, though, tend to reserve the word “coupling” for the within-person association. And so would NOT refer to the between person association as coupling, but just as an association.
+Text for reporting might be something like …
+ 
+At the between-person level, Tanner moderates the association between individuals’ overall level of sleep satisfaction and overall level of NA (gamma_?? = ??, p = .??), such that among individuals with higher Tanner scores, the association is stronger/weaker than among individuals with lower tanner scores. Follow-up Johnson-Neyman probing indicated that that association between sleep satisfaction and NA was significant when Tanner was above XX and below XX.
+Rather than probing at specific values (+1 SD and -1 SD) the “modern” approach is to probe at all values of the moderator and obtain that range of values on the moderator that the association is significant. Formally, this is called Johnson-Neyman probing.
+It can be implemented relatively easily using the sim_slopes() [or johnson_neyman()] function in the jtools package.
+From that output one would report the region of significance, as drafted in the above text.
+ 
+Johnson, P. 0., & Neyman, J. (1936). Tests of certain linear hypotheses and their applications to some educational problems. Statistical Research Memoirs, 1, 57-93.
+Preacher, K. J., Curran, P. J., & Bauer, D. J. (2006). Computational tools for probing interaction effects in multiple linear regression, multilevel modeling, and latent curve analysis. Journal of Educational and Behavioral Statistics, 31, 437-448.
+
+```{r}
+# checking for embedded matrices
+#fixing a few variables that were matrices to be vectors
+# vars <- ema_mlm_df2_cent.new %>% dplyr::select(ends_with(".c")) %>%
+#   names()
+# varsz <- ema_mlm_df2_cent.new %>% dplyr::select(ends_with("_z")) %>%
+#   names()
+# vars
+# ema_mlm_df2_cent.new <-
+#   ema_mlm_df2_cent.new %>%
+#   mutate_at(
+#     vars, as.vector
+#   ) %>%
+#   mutate_at(
+#     varsz, as.vector
+#   )
+```
+
+```{r}
+summary(model1.fit)
+# Get confidence intervals for both fixed and random effects
+intervals(model1.fit, which = 'fixed')
+  
+# Save predicted scores
+ema_mlm_df2_cent.new$pred_m1a <- predict(model1.fit)
+
+# Fit statistics  
+AIC(logLik(model1.fit))
+BIC(logLik(model1.fit))
+logLik(logLik(model1.fit))
+```
+```{r}
+#probing 2-way interaction
+library(lmerTest)
+model1.fitmermod <-
+  lmer(neg.lag_nextmorn ~ dailysleepsat.state*tanner_average_for_mw_z + dailysleepsat.c*tanner_average_for_mw_z  + tanner_age_for_mw_z  + + neg_total_evecurrent.state + neg_total_evecurrent.c + pos.lag_nextmorn.state + pos.lag_nextmorn.c + (1 | ELS_ID), data = ema_mlm_df2_cent.new, na.action = na.exclude
+  )
+summary(model1.fitmermod)
+
+johnson_neyman(model=model1.fitmermod, pred=dailysleepsat.c, modx=tanner_average_for_mw_z)
+# +   lme(
+# +     fixed = 
+# +       neg.lag_nextmorn ~
+# +       -1 +  dailysleepsat.state*tanner_average_for_mw_z + dailysleepsat.c*tanner_average_for_mw_z  + tanner_age_for_mw_z + neg_total_evecurrent.state + neg_total_evecurrent.c + pos.lag_nextmorn.state + pos.lag_nextmorn.c,
+# +     random = 
+# +       ~ -1 + dailysleepsat.state + dailysleepsat.c  | ELS_ID,
+# +     # weights = varIdent() I don't think I need this bc all varaibles are on same row (current evening, next morning prompt all on same row)
+# +     corr = corAR1(),
+# +     data = ema_mlm_df2_cent.new,
+# +     na.action = na.exclude
+# +   )
+```
+
+```{r}
+library(jtools)
+johnson_neyman(model=model1._fit, pred=stress_state, modx=bfi_n_c)
+# simple_slopes(model1.fitmermod
+graph_model(model1.fit)
+sim_slopes(model = model1.fitmermod, pred = dailysleepsat.c, modx = tanner_average_for_mw_z, modx.values = NULL, centered = "all", cond.int = FALSE, johnson_neyman = TRUE, jnplot = FALSE, jnalpha = 0.05, robust = TRUE,  pvals = TRUE, confint = FALSE, ci.width = 0.95, cluster = "ELS_ID")
+```
+
+
+# is this moderation above the same for sleep duration?
+```{r}
+model2.fit <-
+  lme(
+    fixed = 
+      neg.lag_nextmorn ~
+      1 + dailysleephrs.state*tanner_average_for_mw_z + dailysleephrs.c*tanner_average_for_mw_z  + tanner_age_for_mw_z  + neg_total_evecurrent.state + neg_total_evecurrent.c + pos.lag_nextmorn.state + pos.lag_nextmorn.c,
+    random = 
+      ~ 1 | ELS_ID,
+    # weights = varIdent() I don't think I need this bc all varaibles are on same row (current evening, next morning prompt all on same row)
+    corr = corAR1(),
+    data = ema_mlm_df2_cent.new,
+    na.action = na.exclude
+  )
+
+summary(model2.fit)
+
+```

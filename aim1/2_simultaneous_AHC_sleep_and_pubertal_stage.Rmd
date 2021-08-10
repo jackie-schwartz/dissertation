@@ -1,0 +1,169 @@
+---
+title: "1_simultaneous_AHC_sleep_and_pubertal_stage"
+author: "Jackie"
+date: "07/01/21"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+#Load Libraries
+```{r, message=FALSE}
+library(tidyverse)
+library(modelr)
+library(foreign)
+library(readxl)
+library(haven) 
+library(expss)
+library(chron)
+library(hms)
+library(lubridate)
+library(googlesheets4)
+library(googledrive)
+```
+
+# Reading in act, puberty, els data
+```{r filepaths, message=FALSE}
+# full AHC sample with pubertal and demographic info
+pub_demo_act_mw_comb_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/SimultaneousAHC/dem_and_tanner_mw_act_simultaneous.csv"
+
+act_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/actig_merged.csv"
+act_long_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/actig_long.csv"
+mw_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/MW_daily_sleep_data_reduced.csv"
+mw_long_fp <-  "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/MW_daily_sleep_data_longform.csv"
+
+pub_demo <- 
+  read_csv(pub_demo_act_mw_comb_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID))
+
+act_red <- 
+  read_csv(act_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  distinct(ELS_ID, .keep_all = TRUE)
+
+mw_red <- 
+  read_csv(mw_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID))
+
+
+```
+
+
+## merging dfs
+```{r}
+act_mw <-
+  left_join(
+    pub_demo,
+    act_red, 
+    by = "ELS_ID"
+  )
+
+act_mw2 <-
+  left_join(
+    act_mw,
+    mw_red, 
+    by = "ELS_ID"
+  )
+  
+```
+
+## writing dataframe
+
+```{r}
+write_csv(act_mw2, "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/act_mw_simultaneous.csv")
+```
+
+# correlations among sleep measures
+## correlations
+```{r}
+library(modelr)
+library(corrr)
+act_mw2 %>% 
+  dplyr::select(
+    cmep_total_mw,
+    dailysleep_sat_mean,
+    dailysleep_hrs_mean,
+    eff_perc_mean,
+    sleep_time_hrs_mean
+  ) %>% 
+  correlate() %>% 
+  fashion()
+
+cor.test(act_mw2$cmep_total_mw, act_mw2$dailysleep_sat_mean) # r = 0.31963, p=0.0049
+cor.test(act_mw2$cmep_total_mw, act_mw2$dailysleep_hrs_mean) # r = 0.25586, p=0.026
+cor.test(act_mw2$dailysleep_sat_mean, act_mw2$dailysleep_hrs_mean) # r = 0.47968, p=0.0000067
+cor.test(act_mw2$dailysleep_sat_mean, act_mw2$eff_perc_mean) # r = -0.10873, p=0.34
+cor.test(act_mw2$dailysleep_hrs_mean, act_mw2$eff_perc_mean) # r = -0.10926, p=0.33
+cor.test(act_mw2$dailysleep_sat_mean, act_mw2$sleep_time_hrs_mean) # r = 0.060137, p=.6
+cor.test(act_mw2$dailysleep_hrs_mean, act_mw2$sleep_time_hrs_mean) # r = 0.42019, p=.0001
+cor.test(act_mw2$eff_perc_mean, act_mw2$sleep_time_hrs_mean) # r = 0.35395, p=0.0013
+
+corr_mw_sleep <-
+act_mw2 %>% 
+  dplyr::select(
+    cmep_total_mw,
+    dailysleep_sat_mean,
+    dailysleep_hrs_mean,
+    eff_perc_mean,
+    sleep_time_hrs_mean
+  ) %>%
+  rename(
+    `Circadian Preference` = cmep_total_mw,
+    `Sleep Satisfaction` = dailysleep_sat_mean,
+    `Sleep Duration (subjective)` = dailysleep_hrs_mean,
+    `Sleep Efficiency` = eff_perc_mean,
+    `Sleep Duration (objective)` = sleep_time_hrs_mean
+  ) %>%
+  corrr::correlate() %>%
+  corrr::shave(upper = FALSE)
+corr_mw_sleep
+
+corr_mw_sleep_long <-
+  corr_mw_sleep %>%
+  pivot_longer(
+    cols = -term,
+    names_to = "colname",
+    values_to = "corr"
+  ) %>%
+  mutate(
+    rowname = fct_inorder(term),
+    colname = fct_inorder(colname)
+  )
+corr_mw_sleep_long
+
+# plotting correlations
+corrplotsleep <- 
+  corr_mw_sleep_long %>%
+  ggplot(
+    aes(
+      x = rowname,
+      y = fct_rev(colname),
+      fill = corr
+    )
+  ) +
+  geom_tile() +
+  geom_text(
+    aes(
+      label = round(corr, 2)
+      )
+    ) +
+  coord_fixed(expand = FALSE) +
+  scale_fill_distiller(
+    palette = "RdBu", 
+    na.value = "white",
+    direction = 1,
+    limits = c(-1,1)
+  ) +
+  labs(
+    x = "",
+    y = ""
+  ) +
+ theme(
+   axis.text = element_text(size = 10, angle = 30, hjust = 1)
+ )
+corrplotsleep
+ggsave("corrplot_sleep_ahc.png", corrplotsleep)
+```
+

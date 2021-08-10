@@ -1,0 +1,1349 @@
+---
+title: "4_ICA_actigraphy_36R"
+author: "Jackie"
+date: "5/12/2021; 6/27/2021; 7/8/21"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+Computing inter-network functional connectivity
+
+"partial correlation analysis among these 4 ICs using their associated time courses, which resulted in a 4 × 4 symmetric intrinsic network connectivity (INC) matrix for each participant. Each of the 16 unique cells in the matrix reflects the inter-network Fc between a pair of ICs" (Li et al., 2017, _Journal of Psychiatric Research_)
+
+"Then normalize with Fisher r to z transform" (Cao et al., 2020, _Psychiatry Research_)
+
+# loading libraries
+```{r, message=FALSE}
+library(lmerTest)
+library(tidyverse)
+library(foreign)
+library(haven)
+library(readxl)
+library(naniar)
+library(lubridate)
+library(psych)
+library(corrr)
+library(corrplot)
+library(gvlma)
+library(mgcv)
+library(sjmisc)
+library(sjPlot)
+library(car)
+library(BayesFactor)
+```
+
+
+
+# Reading in actigraphy and puberty/demo dfs
+
+```{r filepaths}
+act_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/actig_merged.csv"
+
+# full AHC sample with pubertal and demographic info
+pub_demo_act_mw_comb_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/dem_and_tanner_mw_act_comb_merge.csv"
+```
+
+```{r, message=FALSE}
+act <- read_csv(act_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+
+pub <- read_csv(pub_demo_act_mw_comb_fp) %>% # remember this dataframe is based on a bunch of scriptss that aligned the tanner and age with the AHC date (all variables - eg, Sex, BMI are based on the AHC timepoint)
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+```
+
+## filtering for actigraphy
+```{r}
+pub_filt <-
+  pub %>%
+  filter(
+    !is.na(ACT_session_usable)
+  )
+```
+
+## merging dfs
+And figuring out if any rows were duplicated by merging
+```{r}
+pub_act <-
+  left_join(
+    pub_filt,
+    act,
+    by = "ELS_ID"
+  ) %>%
+  mutate(
+    dup = duplicated(ELS_ID)
+  )
+
+ELSdup <- pub_act %>% filter(dup == TRUE)
+
+pub_act_dup <-
+  pub_act %>%
+  filter(
+    ELS_ID %in% ELSdup$ELS_ID
+  ) # those 3 ids (85,144,188 had redundant rows but the rows were exactly the same so just filtering for distinct ids)
+
+pub_act_final <-
+  pub_act %>%
+  distinct(
+    ELS_ID, 
+    .keep_all = TRUE
+    )
+
+write_csv(pub_act_final, "pub_act_merged.csv")
+```
+
+## reading in intra- and inter-network coherence values, demographics, mean fd
+
+```{r, message=FALSE}
+
+act_36R_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/GICAandDualReg_actigraphy36R/coherence_act_36R.xlsx"
+act_36R <- read_excel(act_36R_fp, sheet = "comb_coherence_act_36R") %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  mutate(
+    timepoint_act_36R =
+      ifelse(
+        str_detect(ELS_ID, "ses-T3x"),
+        "T3x",
+        "T3"
+      ),
+    timepoint_act_36R =
+      ifelse(
+        str_detect(ELS_ID, "ses-T4"),
+        "T4",
+        timepoint_act_36R
+      )
+  ) %>%
+  relocate(timepoint_act_36R, .after = ELS_ID)
+
+inter_net_corr_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/net2net/inter_net_corr_merged_act_36R.csv"
+inter_net <- read_csv(inter_net_corr_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID))
+
+meanfd_and_vols_t3_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/meanFD_ELS-T3_T3x.csv"
+meanfd_and_vols_t3 <- read_csv(meanfd_and_vols_t3_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  dplyr::select(ELS_ID, meanFD) %>%
+  rename(
+    meanFD_t3 = meanFD
+  )
+meanfd_and_vols_t4_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/meanFD_ELS-T4_T4x.csv"
+meanfd_and_vols_t4 <- read_csv(meanfd_and_vols_t4_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  dplyr::select(ELS_ID, meanFD) %>%
+  rename(
+    meanFD_t4 = meanFD
+  )
+
+sensitivity_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/SacheCoury/Jackie_dissertation/assessing_numbers/els_subjs_list_rest_ica_ahc_excludingthosewithlargeinterval.csv"
+sensitivity <- read_csv(sensitivity_fp)
+
+
+scan_covariates_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/scan_covariates.csv"
+scan_covariates <- read_csv(scan_covariates_fp) %>%
+  drop_na(mri_survey_timestamp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  )
+
+cdi_t3t4_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/cdi_t3t4.csv"
+cdi_t3t4 <- read_csv(cdi_t3t4_fp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  ) %>%
+  dplyr::select(ELS_ID, Timepoint_cdi.T3, cdi_total.T3, Timepoint_cdi.T4, cdi_total.T4)
+
+siq_t3t4_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/siq_t3t4.csv"
+siq_t3t4 <- read_csv(siq_t3t4_fp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  ) %>%
+  dplyr::select(ELS_ID, Timepoint_siq.T3, siq_total.T3, Timepoint_siq.T4, siq_total.T4)
+```
+
+### functions
+```{r}
+getmode <- function(v, na.rm=TRUE) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+```
+
+```{r}
+meanfd <-
+  full_join(
+    meanfd_and_vols_t3,
+    meanfd_and_vols_t4,
+    by = "ELS_ID"
+  ) %>%
+  mutate(
+    ELS_ID = str_remove(ELS_ID, "sub-"),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+  ) %>%
+  filter(!(duplicated(ELS_ID)))
+
+dup <-
+  meanfd %>%
+  filter(duplicated(ELS_ID)) # 0 dups
+
+sensitivity_clean <-
+  sensitivity %>%
+  mutate(
+    ELS_ID = str_remove(ELS_ID, "sub-"),
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+  )   
+```
+
+### variable names
+```{r}
+vars_36R <- c("aDMN_Z", "lECN_Z", "Noise_brainstem_Z", "pDMN_Z", "rECN_Z")
+```
+
+### making ELS_ID compatible data type for merging with other dataframes
+```{r}
+# for 36R
+act_36R_clean <-
+  act_36R %>%
+  mutate(
+    timepoint =
+      ifelse(
+        str_detect(ELS_ID, "T3"),
+        "T3",
+        "T4"
+        ),
+    ELS_ID_shortened = 
+      substr(ELS_ID, 5, 7)
+    ) %>%
+  relocate(ELS_ID_shortened, .after = ELS_ID) %>%
+  relocate(timepoint, .after = ELS_ID_shortened) %>%
+  mutate(
+    ELS_ID_shortened = 
+      as.numeric(ELS_ID_shortened),
+    ELS_ID_shortened =
+      factor(ELS_ID_shortened)
+    ) %>%
+  dplyr::select(-ELS_ID) %>%
+  rename(ELS_ID = ELS_ID_shortened) %>%
+  dplyr::select(-salience_Z, -thalamicstriatal_Z)
+
+act_36R_clean_tmpt <-
+  act_36R_clean %>%
+  rename(
+    timepoint_36R = timepoint,
+    aDMN_Z_36R = aDMN_Z,
+    lECN_Z_36R = lECN_Z,
+    Noise_brainstem_Z_36R = Noise_brainstem,
+    pDMN_Z_36R = pDMN_Z,
+    rECN_Z_36R = rECN_Z
+  ) %>%
+  dplyr::select(-timepoint_36R)
+```
+
+
+## merging with scan info
+```{r}
+act_36R_clean_scaninfo <-
+  left_join(
+    act_36R_clean_tmpt, # merging coherence with scan covariates
+    scan_covariates,
+    by = "ELS_ID"
+  ) %>%
+  rename(
+    scan_timepoint = timepoint
+  ) %>%
+  relocate(scan_timepoint, .after = timepoint_act_36R) %>%
+  mutate(
+    drop =
+      ifelse(
+        timepoint_act_36R == scan_timepoint,
+        "keep",
+        "drop"
+      )
+  ) %>%
+    relocate(drop, .after = scan_timepoint)
+
+act_36R_clean_scaninfo_keep <-
+  act_36R_clean_scaninfo %>%
+  filter(
+    drop == "keep"
+  )
+```
+
+# excluding those with scan way far back
+```{r}
+act_36R_clean_sens <-
+  left_join(
+    act_36R_clean_scaninfo_keep,
+    sensitivity_clean,
+    by = "ELS_ID"
+  ) %>%
+  filter(
+    drop_for_act == "keep"
+  ) %>%
+  mutate(
+    act_and_scan_align =
+      ifelse(
+        usable_Actiwatch == restingstate_timept |
+          restingstate_timept == "BOTH",
+        "yes",
+        "no"
+      )
+  ) %>%
+  filter(act_and_scan_align == "yes") %>%
+  filter(usable_Actiwatch != "NOT USABLE")
+```
+
+## distributions of networks with actigraphy sample 36 R
+```{r}
+admn_hist_36R <- 
+  act_36R_clean_sens %>%
+  ggplot(
+    aes(x = aDMN_Z_36R)
+    ) +
+  geom_histogram(fill="firebrick3", alpha = 1) +
+  theme_classic() +
+  labs(
+    x = "anterior DMN within-network FC"
+  )
+admn_hist_36R
+ggsave("admn_hist_act_36R.png", admn_hist_36R)
+
+pdmn_hist_36R <-
+  act_36R_clean_sens %>%
+  ggplot(
+    aes(x = pDMN_Z_36R)
+    ) +
+  geom_histogram(fill="mediumblue", alpha = 1) +
+  theme_classic() +
+  labs(
+    x = "posterior DMN within-network FC"
+  )
+pdmn_hist_36R
+ggsave("pdmn_hist_act_36R.png", pdmn_hist_36R)
+
+recn_hist_36R <-
+  act_36R_clean_sens %>%
+  ggplot(
+    aes(x = rECN_Z_36R)
+    ) +
+  geom_histogram(fill="gold", alpha = 1) +
+  theme_classic() +
+  labs(
+    x = "right FPN within-network FC"
+  )
+recn_hist_36R
+ggsave("recn_hist_act_36R.png", recn_hist_36R)
+
+lecn_hist_36R <-
+  act_36R_clean_sens %>%
+  ggplot(
+    aes(x = lECN_Z_36R)
+    ) +
+  geom_histogram(fill="olivedrab3", alpha = 1) +
+  theme_classic() +
+  labs(
+    x = "left FPN within-network FC"
+  )
+lecn_hist_36R
+ggsave("lecn_hist_act_36R.png", lecn_hist_36R)
+
+noise_brainstem_hist_36R <-
+  act_36R_clean_sens %>%
+  ggplot(
+    aes(x = Noise_brainstem_Z_36R)
+    ) +
+  geom_histogram(fill="grey60", alpha = 1) +
+  theme_classic() +
+  labs(
+    x = "Brainstem within-network FC"
+  )
+noise_brainstem_hist_36R 
+ggsave("noise_brainstem_hist_act_36R.png", noise_brainstem_hist_36R)
+
+library(cowplot)
+all_hist_act_36R <- 
+  cowplot::plot_grid(
+  admn_hist_36R,
+  pdmn_hist_36R,
+  lecn_hist_36R,
+  recn_hist_36R,
+  noise_brainstem_hist_36R,
+  labels = c('A',
+             'B',
+             'C',
+             'D',
+             'E'),
+  label_size = 10,
+  ncol = 2
+  )
+ggsave("all_hist_act_36R.png", plot = all_hist_act_36R, height = 7, width = 7)
+```
+
+# creating correlation matrix
+```{r}
+act_36R_clean_cor <-
+  act_36R_clean_sens %>%
+  dplyr::select(-c(ELS_ID, timepoint_act_36R, scan_timepoint, starts_with("drop"), mri_survey_timestamp, mri_survey_timestamp_recoded, hourofscan, mrisurv_caffeine_day_of_scan, mrisurv_sleepiness_during_scan, mrisurv_sleep_med, starts_with("mrisurv_med_"), usable_MW_DailySleep, usable_Actiwatch, restingstate_timept, ICA_AHC, act_and_scan_align)) %>%
+  drop_na(mrisurv_sleep_before_scan_usual)
+cor_mat <- cor(act_36R_clean_cor, method = "pearson")
+corrplot(cor_mat, addCoef.col = TRUE, method = "square", type = "lower", pch.col = "black", tl.col = "black")
+
+```
+
+# computing/describing demographic info
+```{r}
+dem_plus_act <-
+  left_join(
+    act_36R_clean_sens,
+    pub_act_final,
+    by = "ELS_ID"
+  ) 
+dem_plus_act <-
+  left_join(
+    dem_plus_act,
+    cdi_t3t4,
+    by = "ELS_ID"
+  )
+dem_plus_act <-
+  left_join(
+    dem_plus_act,
+    siq_t3t4,
+    by = "ELS_ID"
+  )
+dem_plus_act <-
+  left_join(
+    dem_plus_act,
+    meanfd,
+    by = "ELS_ID"
+  )
+
+dem_plus_act_clin <-
+  dem_plus_act %>%
+  mutate(
+    cdi_total_with_actigraphy =
+      ifelse(
+        str_detect(timepoint_act_36R, "T3"),
+        cdi_total.T3,
+        NA
+      ),
+    cdi_total_with_actigraphy =
+      ifelse(
+        str_detect(timepoint_act_36R, "T4"),
+        cdi_total.T4,
+        cdi_total_with_actigraphy
+      ),
+    siq_total_with_actigraphy =
+      ifelse(
+        str_detect(timepoint_act_36R, "T3"),
+        siq_total.T3,
+        NA
+      ),
+    siq_total_with_actigraphy =
+      ifelse(
+        str_detect(timepoint_act_36R, "T4"),
+        siq_total.T4,
+        siq_total_with_actigraphy
+      )    
+    ) %>%
+    drop_na(eff_perc_mean) %>%
+  mutate(
+    Child_Sex.T1_rec = factor(Child_Sex.T1_rec),
+    KSADS_Child_Race_by_P.T1 = factor(KSADS_Child_Race_by_P.T1),
+    meanFD =
+      ifelse(
+        timepoint_act_36R == "T3",
+        meanFD_t3,
+        meanFD_t4
+      )
+  )  %>%
+  filter(!(duplicated(ELS_ID)))
+
+sex_count <-
+  dem_plus_act_clin %>%
+  group_by(Sex) %>%
+  summarize(n = n()) 
+# 39 Male, 51 Female
+```
+
+
+13, 40, 92, 114, 182: no usable actigraphy data
+174, 175, 194, 199: have not returned their watches
+46, 84, 120, 138 do not have actigraphy data on the database
+# merging inter-network correlations
+```{r}
+inter_net <-
+  inter_net %>%
+  mutate(
+    ELS_ID = str_remove(ELS_ID, "sub-")
+  ) %>%
+  mutate(ELS_ID = as.numeric(ELS_ID),
+         ELS_ID = factor(ELS_ID))
+
+dem_plus_act_clin_netcorr <-
+  left_join(
+    dem_plus_act_clin,
+    inter_net,
+    by = "ELS_ID"
+    )
+
+dem_plus_act_clin_netcorr <-
+  dem_plus_act_clin_netcorr %>%
+  mutate_at(
+    vars(Gender,mrisurv_caffeine_day_of_scan, mrisurv_sleep_before_scan_usual, mrisurv_sleepiness_during_scan, mrisurv_sleep_med, mrisurv_med_general), factor) %>%
+ mutate(
+    interval_btwn_act_and_scan =
+    ifelse(
+      mri_survey_timestamp_recoded < actigraphy_start_date.x,
+      (mri_survey_timestamp_recoded %--% actigraphy_start_date.x)/ddays(1),
+      (actigraphy_start_date.x %--% mri_survey_timestamp_recoded)/ddays(1)
+      ),
+    interval_btwn_scan_tanner =
+    ifelse(
+      mri_survey_timestamp_recoded < tanner_date_for_act,
+      (mri_survey_timestamp_recoded %--% tanner_date_for_act)/ddays(1),
+      (tanner_date_for_act %--% mri_survey_timestamp_recoded)/ddays(1)
+      ) 
+    )
+
+```
+
+# demographics
+```{r}
+dem_act_scan <-
+  dem_plus_act_clin_netcorr %>%
+  summarize(
+    n = n(),
+    n_female = sum(Sex == 2),
+    n_female_perc = (n_female/n)*100,
+    n_gender = sum(Gender == 2),
+    n_gender_perc = (n_gender/n)*100,
+    n_covid = sum(COVID_AHC_ACT == 1),
+    n_covid_perc = (n_covid/n)*100,
+    n_caffeine_dayofscan = sum(mrisurv_caffeine_day_of_scan == 1, na.rm = TRUE),
+    n_caffeine_dayofscan_perc = (n_caffeine_dayofscan/n)*100,
+    n_sleepiness_during_scan = sum(mrisurv_sleepiness_during_scan == 1, na.rm = TRUE),
+    n_sleepiness_during_scan_perc = (n_sleepiness_during_scan/n)*100,
+    n_sleepmed = sum(mrisurv_sleep_med == 1, na.rm = TRUE),
+    n_sleepmed_perc = (n_sleepmed/n)*100,
+    n_med_general = sum(mrisurv_med_general == 1, na.rm = TRUE),
+    n_med_general_perc = (n_med_general/n)*100,
+    age_mean = mean(tanner_age_for_act),
+    age_sd = sd(tanner_age_for_act),
+    age_min = min(tanner_age_for_act),
+    age_max = max(tanner_age_for_act),
+    tanner_mean = mean(tanner_average_for_act),
+    tanner_sd = sd(tanner_average_for_act),
+    tanner_min = min(tanner_average_for_act),
+    tanner_max = max(tanner_average_for_act),
+    bmi_mean = mean(BMI_ACT, na.rm = TRUE),
+    bmi_sd = sd(BMI_ACT, na.rm = TRUE),
+    bmi_min = min(BMI_ACT, na.rm = TRUE),
+    bmi_max = max(BMI_ACT, na.rm = TRUE),
+    householdincome_mean = mean(Household_Income_ACT, na.rm = TRUE),
+    householdincome_sd = sd(Household_Income_ACT, na.rm = TRUE),
+    householdincome_min = min(Household_Income_ACT, na.rm = TRUE),
+    householdincome_max = max(Household_Income_ACT, na.rm = TRUE),
+    householdincome_mode = getmode(Household_Income_ACT),
+    sumsevtype_mean = mean(sumsev_type),
+    sumsevtype_sd = sd(sumsev_type),
+    sumsevtype_min = min(sumsev_type),
+    sumsevtype_max = max(sumsev_type),
+    intervalbtwn_act_and_scan_mean = mean(interval_btwn_act_and_scan),
+    intervalbtwn_act_and_scan_sd = sd(interval_btwn_act_and_scan),
+    intervalbtwn_act_and_scan_min = min(interval_btwn_act_and_scan),
+    intervalbtwn_act_and_scan_max = max(interval_btwn_act_and_scan),
+    meanfd_mean = mean(meanFD),
+    meanfd_sd = sd(meanFD),
+    meanfd_min = min(meanFD),
+    meanfd_max = max(meanFD),
+    asq_mean = mean(asq_total_act, na.rm = TRUE),
+    asq_sd = sd(asq_total_act, na.rm = TRUE),
+    asq_min = min(asq_total_act, na.rm = TRUE),
+    asq_max = max(asq_total_act, na.rm = TRUE),      
+    race_count_wh = sum(KSADS_Child_Race_by_P.T1 == "1"),
+    race_count_bla = sum(KSADS_Child_Race_by_P.T1 == "2"),
+    race_count_lat = sum(KSADS_Child_Race_by_P.T1 == "3"),
+    race_count_as = sum(KSADS_Child_Race_by_P.T1 == "4"),
+    race_count_bir = sum(KSADS_Child_Race_by_P.T1 == "5"),
+    race_count_oth = sum(KSADS_Child_Race_by_P.T1 == "6"),
+    race_perc_wh = (race_count_wh/n)*100,
+    race_perc_bla = (race_count_bla/n)*100,
+    race_perc_lat = (race_count_lat/n)*100,
+    race_perc_as = (race_count_as/n)*100,
+    race_perc_bir = (race_count_bir/n)*100,
+    race_perc_oth = (race_count_oth/n)*100,
+  )
+write_csv(dem_act_scan, "demo_table_act_scan.csv")
+```
+
+
+# potential outliers
+```{r}
+# sleep efficiency outliers
+OutVals = boxplot(dem_plus_act_clin_netcorr$eff_perc_mean)$out # based on 1.5*IQR above the third quartile (Upper Bound: (Q3 + 1.5 * IQR)) and below the first quartile (Lower Bound: (Q1 - 1.5 * IQR))
+which(dem_plus_act_clin_netcorr$eff_perc_mean %in% OutVals)
+dem_plus_act_clin_netcorr[which(dem_plus_act_clin_netcorr$eff_perc_mean %in% OutVals),]
+dem_plus_act_clin_netcorr_rem <- 
+  dem_plus_act_clin_netcorr %>%
+  filter(
+    ELS_ID != "29",
+    ELS_ID != "130",
+    ELS_ID != "98"
+  )
+```
+
+
+## centering based on this sample
+I standardized tanner stage, age at tanner assessment, and bmi within each sex
+```{r}
+dem_plus_act_clin_netcorr_rem_cent <-
+  dem_plus_act_clin_netcorr_rem %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_ACT = factor(COVID_AHC_ACT),
+    eff_perc_mean_z = scale(eff_perc_mean),
+    sleep_time_hrs_mean_z = scale(sleep_time_hrs_mean),
+    household_income_act_z = scale(Household_Income_ACT),
+    sumsev_type_z = scale(sumsev_type),
+    asq_total_act_z = scale(asq_total_act),
+    cmep_total_act_z = scale(cmep_total_act),
+    admn_lecn_act_z = scale(admn_lecn_act),
+    admn_recn_act_z = scale(admn_recn_act),
+    pdmn_lecn_act_z = scale(pdmn_lecn_act),
+    pdmn_recn_act_z = scale(pdmn_recn_act),
+    pDMN_Z_36R_z = scale(pDMN_Z_36R),
+    aDMN_Z_36R_z = scale(aDMN_Z_36R),
+    Noise_brainstem_Z_36R_z = scale(Noise_brainstem_Z_36R)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_average_for_act_z = scale(tanner_average_for_act), # standardize within each sex
+    tanner_adrenal_act_z = scale(tanner_adrenal_act),
+    tanner_gonadal_act_z = scale(tanner_gonadal_act),
+    bmi_at_act_z = scale(BMI_ACT),
+    tanner_age_for_act_z = scale(tanner_age_for_act)
+  ) %>%
+  ungroup()
+```
+
+# test of potential covariates
+```{r}
+# corr btwn sleep eff and interval between act and scan
+cor.test(dem_plus_act_clin_netcorr_rem_cent$eff_perc_mean, dem_plus_act_clin_netcorr_rem_cent$interval_btwn_act_and_scan) # no corr, r = 0.1217741, p = 0.2612
+
+# corr btwn sleep eff and mean FD
+cor.test(dem_plus_act_clin_netcorr_rem_cent$eff_perc_mean, dem_plus_act_clin_netcorr_rem_cent$meanFD) # no corr, r = -0.1287733 , p = 0.2346
+
+# corr btwn sleep eff and age
+cor.test(dem_plus_act_clin_netcorr_rem_cent$eff_perc_mean, dem_plus_act_clin_netcorr_rem_cent$tanner_age_for_act)  # no corr, r = -0.02492253, p = 0.8188 (as seen in our puberty analysis)
+
+# corr btwn sleep eff and tanner
+cor.test(dem_plus_act_clin_netcorr_rem_cent$eff_perc_mean, dem_plus_act_clin_netcorr_rem_cent$tanner_average_for_act) # no corr, r = 0.1047741, p = 0.3341
+
+# association btwn sleep eff and sex
+summary(lm(eff_perc_mean_z ~ Sex, data = dem_plus_act_clin_netcorr_rem_cent)) # no association, B = 0.2773, p = 0.204
+
+# corr btwn sleep eff and dperession severity
+cor.test(dem_plus_act_clin_netcorr_rem_cent$eff_perc_mean, dem_plus_act_clin_netcorr_rem_cent$cdi_total_with_actigraphy)  # no corr, r = 0.2063942, p = 0.05657
+
+# corr btwn sleep eff and SI severity
+cor.test(dem_plus_act_clin_netcorr_rem_cent$eff_perc_mean, dem_plus_act_clin_netcorr_rem_cent$siq_total_with_actigraphy)  # no corr, r = -0.0309999, p = 0.7876)
+
+# corr btwn sleep eff and perceived stress
+cor.test(dem_plus_act_clin_netcorr_rem_cent$eff_perc_mean, dem_plus_act_clin_netcorr_rem_cent$asq_total_act)  # no corr, r = 0.1258991, p = 0.2509
+```
+
+```{r}
+# distribution of time of scan
+timeofscanplot <- 
+  dem_plus_act_clin_netcorr_rem_cent %>%
+  ggplot(
+    aes(x=hourofscan)
+  ) +
+  geom_freqpoly() + 
+  theme_classic() +
+  labs(
+    x = "Time of Scan",
+    title = "Distribution of Scan Time of Day"
+    ) +
+  scale_x_time(breaks = scales::breaks_width("2 hours"))
+timeofscanplot
+ggsave("timeofscanplot_act.png", timeofscanplot, width = 7, height = 5)
+```
+
+
+
+
+
+# associations between inter-network connectivity and sleep efficiency
+```{r}
+options(scipen = 999)
+
+m1 <- lm(eff_perc_mean_z  ~ admn_lecn_act_z + pdmn_lecn_act_z, data = dem_plus_act_clin_netcorr_rem_cent)
+summary(gvlma(m1)) # assumptions met
+
+summary(m1)
+# admn-lecn: B=-0.1553747140033113761, p=0.167
+# pdmn-lecn: B=0.0424544574408788830, p=0.704
+# R2 = -0.0006373, p=0.3823
+m1p <- c(0.167, 0.704)
+# CI
+dmnlecnci = Boot(m1, coef,
+method='case', R=1000)
+dmnlecnciconfint <- confint(dmnlecnci, type='norm')
+# admn_lecn_act_z -0.3482625 0.05045199
+# pdmn_lecn_act_z -0.1749828 0.25375681
+
+# BF
+dmnlecnbf <- regressionBF(
+  formula = eff_perc_mean_z  ~ admn_lecn_act_z + pdmn_lecn_act_z, data = dem_plus_act_clin_netcorr_rem_cent
+)
+# [1] admn_lecn_act_z                   : 0.4957355 ±0%
+# [2] pdmn_lecn_act_z                   : 0.2241542 ±0%
+
+m2 <- lm(eff_perc_mean_z  ~ admn_recn_act_z + pdmn_recn_act_z, data = dem_plus_act_clin_netcorr_rem_cent)
+summary(gvlma(m2)) # checks out
+summary(m2)
+# admn-recn: B=-0.0926947031868862181, p=0.438
+# pdmn-recn: B=-0.0691787155640375684, p=0.562
+# R2=-0.01107, p=0.5693
+m2p <- c(0.438, 0.562)
+# CI
+dmnrecnci = Boot(m2, coef,
+method='case', R=1000)
+dmnrecnciconfint <- confint(dmnrecnci, type='norm')
+# admn_recn_act_z -0.3480545 0.1633373
+# pdmn_recn_act_z -0.2979558 0.1631309
+
+# BF
+dmnrecnbf <- regressionBF(
+  formula = eff_perc_mean_z  ~ admn_recn_act_z + pdmn_recn_act_z, data = dem_plus_act_clin_netcorr_rem_cent
+)
+# [1] admn_recn_act_z                   : 0.3915034 ±0%
+# [2] pdmn_recn_act_z                   : 0.3473652 ±0%
+```
+
+# associations between within-DMN connectivity and sleep
+- given we didn't preregister for parts of the  DMN, we will test the anteiror and posterior in one model
+```{r}
+m3 <- lm(eff_perc_mean_z ~ aDMN_Z_36R_z + pDMN_Z_36R_z, data = dem_plus_act_clin_netcorr_rem_cent)
+summary(gvlma(m3)) # assumptions met
+summary(m3)
+# aDMN: B=0.0582998261695486797, p=0.5855,
+# pDMN: B=0.2684042776284051857, p=0.0136
+plot_model(m3, type = "diag")
+plot(m3)
+# R2 = 0.05948, p=0.02833
+m3p <- c(0.5855, 0.0136)
+# CI
+apdmnci = Boot(m3, coef,
+method='case', R=1000)
+apdmnciconfint <- confint(apdmnci, type='norm')
+# aDMN_Z_36R_z -0.15399822 0.2788208
+# pDMN_Z_36R_z  0.07589388 0.4420860
+
+# BF
+apdmnbf <- regressionBF(
+  formula = eff_perc_mean_z ~ aDMN_Z_36R_z + pDMN_Z_36R_z, data = dem_plus_act_clin_netcorr_rem_cent
+)
+# [1] aDMN_Z_36R_z                : 0.3505675 ±0%
+# [2] pDMN_Z_36R_z                : 4.898037 ±0%
+
+#---------------------------------------------------------------------------------------------------------
+
+#### sensitivity analsyis removign those 2 participants who were taking sleep meds
+dem_plus_ica_plus_netcorr_sens <-
+  dem_plus_act_clin_netcorr_rem_cent %>%
+  filter(
+    !ELS_ID == "104", # already removed 
+    !ELS_ID == "158"
+  )
+m3_sens <- lm(eff_perc_mean_z ~ aDMN_Z_36R_z + pDMN_Z_36R_z, data = dem_plus_ica_plus_netcorr_sens)
+summary(m3_sens) # yes pDMN still sig (B=0.26821, p=0.0134); aDMN not sig (B=0.01300, p=0.9052)
+summary(gvlma(m3_sens))  # assumptions met
+
+# making sureo our noise network was not assocaited with sleep efficiency
+m4_ctrl <- lm(eff_perc_mean_z ~ Noise_brainstem_Z_36R_z, data = dem_plus_act_clin_netcorr_rem_cent)
+summary(gvlma(m4_ctrl))
+summary(m4_ctrl) # sleep efficiency not associated with noise network (B=0.1078903835806934025, p=0.343)
+
+# CI
+noiseci = Boot(m4_ctrl, coef,
+method='case', R=1000)
+noiseciconfint <- confint(noiseci, type='norm')
+
+# Noise_brainstem_Z_36R_z -0.08416622 0.3113112
+
+# BF
+noisebf <- regressionBF(
+  formula = eff_perc_mean_z ~ Noise_brainstem_Z_36R, data = dem_plus_act_clin_netcorr_rem_cent
+)
+# Noise_brainstem_Z_36R_z : 0.3335377 ±0%
+
+```
+> We did not find evidence for effects of inter-network connectivity between each of the lateralized ECNs and the aDMN and pDMN in relation to sleep efficiency. We also did not find evidence of within-network connectivity of the aDMN relating to sleep efficiency. We found weak evidence of a relation between pDMN connectivity and sleep efficiency. As a control newtork we also tested whether FC within the brainstem was associated with sleep efficiency and we did not find evidence of this.
+
+### looking further at the pDMN
+```{r}
+m3_int <- summary(m3)$coefficients[1,1]
+m3_pdmnslp <- summary(m3)$coefficients[3,1]
+
+m3_plot <- 
+  dem_plus_act_clin_netcorr_rem_cent %>%
+  ggplot(
+    aes(
+      x=pDMN_Z_36R_z,
+      y = eff_perc_mean_z
+      )
+    ) +
+  geom_point(
+    size = 2.0,
+    alpha = .5, 
+    color = "black"
+    ) +
+  geom_abline(
+    intercept = m3_int,
+    slope = m3_pdmnslp,
+    size=2.0, 
+    color="black"
+    ) +
+  labs(
+    x = "Within-Network Posterior DMN Functional Connectivity (z-scored)",
+    y = "Averaged Daily Sleep Efficiency (z-scored)",
+    title = "Posterior DMN Functional Connectivity and Daily Sleep Efficiency"
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(size = 12),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10))
+m3_plot
+ggsave("pDMN_Z_36R_and_SleepEff.png", m3_plot, width = 6, height =6)
+```
+
+###  mc correction
+```{r}
+
+p_all <- c(m1p, m2p, m3p)
+ # we have 6 effects tested against each other in 3 regressions. FDR is of those (discoveries) rejected null hypotheses, what's the expected value of those that are false (that are incorrect rejections of true null)?
+# uncorrected:  0.1670 0.7040 0.4380 0.5620 0.5855 0.0136
+p.adjust(p_all, method = "fdr", n = length(p_all))
+#  corrected:  0.5010 0.7040 0.7026 0.7026 0.7026 0.0816
+
+```
+### creating OLS tables
+```{r}
+library(stargazer) # (Hlavac, Marek (2018). stargazer: Well-Formatted Regression and Summary Statistics Tables)
+table_act_brain <- stargazer(m1, m2, m3, type = "text", style = "default", title = "Table XX. Associations between Resting-state Functional Connectivity and Sleep Efficiency", dep.var.labels = c("Objective Sleep Efficiency"), covariate.labels = c("Intercept", "aDMN-lECN", "pDMN-lECN", "aDMN-rECN", "pDMN-rECN", "aDMN", "pDMN"), column.labels = c("LECN-DMN FC", "RECN-DMN FC", "Within DMN FC"),  summary = TRUE, out.header = TRUE, single.row = TRUE, ci=TRUE, ci.level = .95, intercept.bottom = FALSE, intercept.top = FALSE, digits = 2)
+write_lines(table_act_brain, "table_act_brain.tsv")
+```
+
+## are any of these scan related variables associated with DMN brain or sleep efficiency?
+```{r}
+# association between pDMN and scan time of day
+cov1 <- lm(pDMN_Z_36R_z ~ scale(hourofscan), data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov1)
+# no association between pDMN FC and time of scan (B=-0.052851300441954289500, p=0.627)
+
+# association between pDMN and hours of sleep night prior
+cov2 <-lm(pDMN_Z_36R_z ~ scale(mrisurv_sleep_hrs_night_before_scan), data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov2)
+# no association between sleep hrs night before and pDMN FC (B = 0.08619, p=0.447)
+
+# resetting contrasts (original:  1, More than usual | 2, Usual | 3, Less than usual; reset: 1, Usual | 2, More thank usual | 3, Less than usual)
+dem_plus_act_clin_netcorr_rem_cent$mrisurv_sleep_before_scan_usual <- relevel(dem_plus_act_clin_netcorr_rem_cent$mrisurv_sleep_before_scan_usual, ref = "2")
+cov3 <- lm(pDMN_Z_36R_z ~ mrisurv_sleep_before_scan_usual, data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov3)
+# no association between usual sleep night before scan and pDMN FC (B = -0.3595, p=0.202, and B=-0.2168, p = 0.483)
+
+# association between pDMN and caffeine use day of scan
+cov4 <- lm(pDMN_Z_36R_z ~ factor(mrisurv_caffeine_day_of_scan), data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov4)
+# no association between pDMN FC and caffeine use day of scan (B=-0.41119, p = 0.158)
+
+# association between pDMN and med use
+cov5 <- lm(pDMN_Z_36R_z ~ factor(mrisurv_med_general), data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov5)
+# no association between pDMN FC and medication use (B=-0.22034, p = 0.4026)
+
+
+# association between pDMN and sleepiness during scan
+cov6 <- lm(pDMN_Z_36R_z ~ factor(mrisurv_sleepiness_during_scan), data = dem_plus_act_clin_netcorr_rem_cent)
+summary(cov6)
+# no association between pDMN FC and sleepiness during scan  (B=-0.3736, p = 0.0909)
+
+# association between pDMN and sleepiness during scan
+covtanner <- lm(pDMN_Z_36R_z ~ tanner_average_for_act_z + tanner_age_for_act_z, data = dem_plus_act_clin_netcorr_rem_cent)
+summary(covtanner)
+# (B=-.0354536291643423456810, p=0.755)
+
+table_ptoential_confounds_brain <- 
+  stargazer(
+    cov1, cov2, cov3, cov4, cov5, cov6, 
+    type = "text", style = "default",
+    title = "Table XX. Associations between pDMN FC and scan related variables",
+    dep.var.labels = c("pDMN FC"), 
+    covariate.labels = c("Intercept", "time of day", "hours of sleep night before scan", "more than usual sleep", "less than usual sleep", "caffeine day of scan", "medication use", "sleepiness during scan"), 
+    summary = TRUE, 
+    out.header = TRUE,
+    single.row = TRUE, 
+    ci=TRUE, 
+    ci.level = .95, 
+    intercept.bottom = FALSE, 
+    intercept.top = FALSE, 
+    digits = 2
+    )
+write_lines(table_ptoential_confounds_brain, "table_ptoential_confounds_brain.tsv")
+#-------------------------------------------------------------------------------
+
+# association between sleep efficiency and scan time of day
+cov7 <- lm(eff_perc_mean_z ~ scale(hourofscan), data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov7)
+# the later the scan in the day, the less sleep efficiency (B=-0.231001932575285451, p=0.0313)
+
+# association between sleep efficiency and hours of sleep night prior
+cov8 <- lm(eff_perc_mean_z ~ scale(mrisurv_sleep_hrs_night_before_scan), data = dem_plus_act_clin_netcorr_rem_cent)
+summary(cov8)
+# no association between sleep hrs night before and pDMN FC (B = -0.08655, p=0.445)
+
+# resetting contrasts (original:  1, More than usual | 2, Usual | 3, Less than usual; reset: 1, Usual | 2, More thank usual | 3, Less than usual)
+dem_plus_act_clin_netcorr_rem_cent$mrisurv_sleep_before_scan_usual <- relevel(dem_plus_act_clin_netcorr_rem_cent$mrisurv_sleep_before_scan_usual, ref = "2")
+cov9 <- lm(eff_perc_mean_z ~ mrisurv_sleep_before_scan_usual, data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov9)
+# no association between getting more than usual sleep night before scan and sleep efficiency (B = -0.19596, p=0.488) and no association between getting less than usual sleep night before scan and sleep efficiency (B = -0.13046, p=0.675)
+
+# association between sleep efficiency and caffeine use day of scan
+cov10 <- lm(eff_perc_mean_z ~ factor(mrisurv_caffeine_day_of_scan), data = dem_plus_act_clin_netcorr_rem_cent)
+summary(cov10)
+# no association (B=0.090480, p = 0.7574)
+
+# association between sleep efficiency and med use
+cov11 <- lm(eff_perc_mean_z ~ factor(mrisurv_med_general), data = dem_plus_act_clin_netcorr_rem_cent)
+summary(cov11)
+# no association between pDMN FC and medication use (B=-0.18245, p = 0.4882)
+
+# association between sleep efficiency and sleepiness during scan
+cov12 <- lm(eff_perc_mean_z ~ factor(mrisurv_sleepiness_during_scan), data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov12)
+# no association between pDMN FC and sleepiness during scan  (B=0.14066, p = 0.528)
+
+
+table_ptoential_confounds_eff <- 
+  stargazer(
+    cov7, cov8, cov9, cov10, cov11, cov12, 
+    type = "text", style = "default",
+    title = "Table XX. Table XX. Associations between sleep efficiency and scan related variables",
+    dep.var.labels = c("Objective Sleep Efficiency"), 
+    covariate.labels = c("Intercept", "time of day", "hours of sleep night before scan", "more than usual sleep", "less than usual sleep", "caffeine day of scan", "medication use", "sleepiness during scan"), 
+    summary = TRUE, 
+    out.header = TRUE,
+    single.row = TRUE, 
+    ci=TRUE, 
+    ci.level = .95, 
+    intercept.bottom = FALSE, 
+    intercept.top = FALSE, 
+    digits = 2
+    )
+write_lines(table_ptoential_confounds_eff, "table_ptoential_confounds_eff.tsv")
+```
+> We only found that time of day was associated with sleep efficiency. We therefore retested the effect of pDMN with the covaritae of time of day. Given we know from the previous chapter, sleep duration is associated with sleep efficiency so we covaried that as well
+
+```{r}
+m5_sens <- lm(eff_perc_mean_z ~ scale(hourofscan) + sleep_time_hrs_mean_z + pDMN_Z_36R_z, data = dem_plus_act_clin_netcorr_rem_cent)
+summary(gvlma(m5_sens)) # assumptions met
+summary(m5_sens)
+# scale(hourofscan) B=-0.212393588365280217, p=0.03246
+# sleep_time_hrs_z   B=0.293722230602546375, p=0.00347
+# pDMN_Z_36R_z       B=0.255381894417151645, p=0.01064
+# R2 = 0.1825, p=0.0001875
+
+# CI 
+m5ci = Boot(m5_sens, coef,
+method='case', R=1000)
+m5ciciconfint <- confint(m5ci, type='norm')
+# scale(hourofscan)     -0.38464100 -0.04005793
+# sleep_time_hrs_mean_z  0.10381644  0.48036881
+# pDMN_Z_36R_z           0.08049275  0.43533647
+
+# BF
+m5bf <- regressionBF(
+  formula = eff_perc_mean_z ~ hourofscan + sleep_time_hrs_mean_z + pDMN_Z_36R_z, data = dem_plus_act_clin_netcorr_rem_cent
+)
+# [1] hourofscan                                        : 1.777463 ±0%
+# [2] sleep_time_hrs_mean_z                             : 10.10111 ±0%
+# [3] pDMN_Z_36R_z                                      : 4.898037 ±0%
+
+```
+> We found that all effects remained significantly associated with sleep efficiency.
+
+--------------------------------------------------------------------------------
+Given early scan times are associaetd with sleep efficiency, wondering if cmep was associated with early scan times?
+```{r}
+summary(lm(cmep_total_act_z ~ scale(hourofscan), data = dem_plus_act_clin_netcorr_rem_cent)) # no
+```
+### potential outliers
+```{r}
+dem_plus_act_clin_netcorrcmep <-
+  dem_plus_act_clin_netcorr %>%
+  drop_na(cmep_total_act)
+# sleep efficiency outliers
+OutVals = boxplot(dem_plus_act_clin_netcorrcmep$cmep_total_act)$out # none
+
+```
+
+
+## centering based on this sample
+I standardized tanner stage, age at tanner assessment, and bmi within each sex
+```{r}
+dem_plus_act_clin_netcorrcmep_cent <-
+  dem_plus_act_clin_netcorrcmep %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_ACT = factor(COVID_AHC_ACT),
+    eff_perc_mean_z = scale(eff_perc_mean),
+    sleep_time_hrs_mean_z = scale(sleep_time_hrs_mean),
+    household_income_act_z = scale(Household_Income_ACT),
+    sumsev_type_z = scale(sumsev_type),
+    asq_total_act_z = scale(asq_total_act),
+    cmep_total_act_z = scale(cmep_total_act),
+    admn_lecn_act_z = scale(admn_lecn_act),
+    admn_recn_act_z = scale(admn_recn_act),
+    pdmn_lecn_act_z = scale(pdmn_lecn_act),
+    pdmn_recn_act_z = scale(pdmn_recn_act),
+    pDMN_Z_36R_z = scale(pDMN_Z_36R),
+    aDMN_Z_36R_z = scale(aDMN_Z_36R),
+    Noise_brainstem_Z_36R_z = scale(Noise_brainstem_Z_36R)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_average_for_act_z = scale(tanner_average_for_act), # standardize within each sex
+    tanner_adrenal_act_z = scale(tanner_adrenal_act),
+    tanner_gonadal_act_z = scale(tanner_gonadal_act),
+    bmi_at_act_z = scale(BMI_ACT),
+    tanner_age_for_act_z = scale(tanner_age_for_act)
+  ) %>%
+  ungroup()
+```
+
+# test of potential covariates
+```{r}
+# corr btwn cmep and interval between act and scan
+cor.test(dem_plus_act_clin_netcorrcmep_cent$cmep_total_act, dem_plus_act_clin_netcorrcmep_cent$interval_btwn_act_and_scan) # no corr, r = 0.06819312, p = 0.561
+
+# corr btwn cmep and mean FD
+cor.test(dem_plus_act_clin_netcorrcmep_cent$cmep_total_act, dem_plus_act_clin_netcorrcmep_cent$meanFD) # no corr, r = -0.09845044 , p = 0.4007
+
+# corr btwn cmep and age
+cor.test(dem_plus_act_clin_netcorrcmep_cent$cmep_total_act, dem_plus_act_clin_netcorrcmep_cent$tanner_age_for_act)  # no corr, r = -0.2178977, p = 0.06038 (as seen in our puberty analysis)
+
+# corr btwn cmep and tanner
+cor.test(dem_plus_act_clin_netcorrcmep_cent$cmep_total_act, dem_plus_act_clin_netcorrcmep_cent$tanner_average_for_act) # no corr, r = 0.1285195, p = 0.2718
+
+# association btwn sleep eff and sex
+summary(lm(cmep_total_act_z ~ Sex, data = dem_plus_act_clin_netcorrcmep_cent)) # no association, B = -0.2179, p = 0.352
+
+# corr btwn sleep eff and dperession severity
+cor.test(dem_plus_act_clin_netcorrcmep_cent$cmep_total_act, dem_plus_act_clin_netcorrcmep_cent$cdi_total_with_actigraphy)  # yes, r = -0.4561051, p = 0.00004427
+
+# corr btwn sleep eff and SI severity
+cor.test(dem_plus_act_clin_netcorrcmep_cent$cmep_total_act, dem_plus_act_clin_netcorrcmep_cent$siq_total_with_actigraphy)  # no corr, r = -0.417271, p = 0.0004432)
+
+# corr btwn sleep eff and perceived stress
+cor.test(dem_plus_act_clin_netcorrcmep_cent$cmep_total_act, dem_plus_act_clin_netcorrcmep_cent$asq_total_act)  # no corr, r = -0.4046552, p = 0.0003489
+```
+# associations between inter-network connectivity and circadian preference
+```{r}
+options(scipen = 999)
+
+m6 <- lm(cmep_total_act_z  ~ admn_lecn_act_z + pdmn_lecn_act_z, data = dem_plus_act_clin_netcorrcmep_cent)
+summary(gvlma(m6)) # assumptions met
+vif(m6)
+summary(m6)
+# admn-lecn: B=-0.0896697363055785207, p=0.462
+# pdmn-lecn: B=0.0455127976292509853, p=0.708
+# R2 = 0.01523, p=0.6427
+m6p <- c(0.462, 0.708)
+# CI
+dmnlecnci = Boot(m6, coef,
+method='case', R=1000)
+dmnlecnciconfint <- confint(dmnlecnci, type='norm')
+# admn_lecn_act_z -0.2872507 0.1375698
+# pdmn_lecn_act_z -0.3224034 0.1999068
+
+# BF
+dmnlecnbf <- regressionBF(
+  formula = cmep_total_act_z  ~ admn_lecn_act_z + pdmn_lecn_act_z, data = dem_plus_act_clin_netcorrcmep_cent
+)
+# [1] admn_lecn_act_z                   : 0.3311456 ±0%
+# [2] pdmn_lecn_act_z                   : 0.2771338 ±0%
+# [3] admn_lecn_act_z + pdmn_lecn_act_z : 0.2833662 ±0.01%
+
+m7 <- lm(cmep_total_act_z  ~ admn_recn_act_z  + pdmn_recn_act_z, data = dem_plus_act_clin_netcorrcmep_cent)
+summary(gvlma(m7)) 
+summary(m7)
+# admn-recn: B=0.0861561895269361416, p=0.508
+# pdmn-recn: B=-0.0301351430655383244, p=0.817
+# R2=-0.02147, p=0.8011
+m7p <- c(0.508, 0.817)
+# CI
+dmnrecnci = Boot(m7, coef,
+method='case', R=1000)
+dmnrecnciconfint <- confint(dmnrecnci, type='norm')
+# admn_recn_act_z -0.1376741 0.3263981
+# pdmn_recn_act_z -0.2652432 0.1898932
+
+# BF
+dmnrecnbf <- regressionBF(
+  formula = cmep_total_act_z  ~ admn_recn_act_z  + pdmn_recn_act_z, data = dem_plus_act_clin_netcorrcmep_cent
+)
+# [1] admn_recn_act_z                                      : 0.2833984  
+# [3] pdmn_recn_act_z                                      : 0.2391303  
+
+```
+
+# associations between within-DMN connectivity and sleep
+- given we didn't preregister for parts of the  DMN, we will test the anteiror and posterior in one model
+```{r}
+m8 <- lm(cmep_total_act_z ~ aDMN_Z_36R_z + pDMN_Z_36R_z, data = dem_plus_act_clin_netcorrcmep_cent)
+summary(gvlma(m8)) # assumptions met
+summary(m8)
+# aDMN: B=0.2908967624664776097, p=0.0124,
+# pDMN: B=0.0931112440089768428, p=0.4144
+
+# R2 = 0.07798, p=0.02006
+m8p <- c(0.0124, 0.4144)
+# CI
+apdmnci = Boot(m8, coef,
+method='case', R=1000)
+apdmnciconfint <- confint(apdmnci, type='norm')
+# aDMN_Z_36R_z  0.09320121 0.4906385
+# pDMN_Z_36R_z -0.11675703 0.2913601
+
+# BF
+apdmnbf <- regressionBF(
+  formula = cmep_total_act_z ~ aDMN_Z_36R_z + pDMN_Z_36R_z, data = dem_plus_act_clin_netcorrcmep_cent
+)
+# [1] aDMN_Z_36R_z                : 5.8438  ±0.01%
+# [2] pDMN_Z_36R_z                : 0.4673634 ±0%
+
+#---------------------------------------------------------------------------------------------------------
+
+#### sensitivity analsyis removign those 2 participants who were taking sleep meds
+dem_plus_ica_plus_netcorr_sens <-
+  dem_plus_act_clin_netcorrcmep_cent %>%
+  filter(
+    !ELS_ID == "104", # already removed 
+    !ELS_ID == "158"
+  )
+m3_sens <- lm(cmep_total_act_z ~ aDMN_Z_36R_z + pDMN_Z_36R_z, data = dem_plus_ica_plus_netcorr_sens)
+summary(m3_sens) # yes aDMN still sig (B=0.28305, p=0.0192); pDMN not sig (B=0.08173, p=0.4775)
+summary(gvlma(m3_sens))  # assumptions met
+
+# making sureo our noise network was not assocaited with sleep efficiency
+m8_ctrl <- lm(cmep_total_act_z ~ Noise_brainstem_Z_36R_z, data = dem_plus_act_clin_netcorrcmep_cent)
+summary(gvlma(m8_ctrl))
+summary(m8_ctrl) # sleep efficiency not associated with noise network (B=0.1167523072753710034, p=0.549)
+
+# CI
+noiseci = Boot(m8_ctrl, coef,
+method='case', R=1000)
+noiseciconfint <- confint(noiseci, type='norm')
+
+# Noise_brainstem_Z_36R_z -0.2970276 0.1626843
+
+# BF
+noisebf <- regressionBF(
+  formula = cmep_total_act_z ~ Noise_brainstem_Z_36R, data = dem_plus_act_clin_netcorrcmep_cent
+)
+# Noise_brainstem_Z_36R_z : 0.279234 ±0%
+
+```
+> We did not find evidence for effects of inter-network connectivity between each of the lateralized ECNs and the aDMN and pDMN in relation to sleep efficiency. We also did not find evidence of within-network connectivity of the aDMN relating to sleep efficiency. We found weak evidence of a relation between pDMN connectivity and sleep efficiency. As a control newtork we also tested whether FC within the brainstem was associated with sleep efficiency and we did not find evidence of this.
+
+### looking further at the aDMN
+```{r}
+m8_int <- summary(m8)$coefficients[1,1]
+m8_admnslp <- summary(m8)$coefficients[2,1]
+
+m8_plot <- 
+  dem_plus_act_clin_netcorrcmep_cent %>%
+  ggplot(
+    aes(
+      x=aDMN_Z_36R_z,
+      y = cmep_total_act_z
+      )
+    ) +
+  geom_point(
+    size = 2.0,
+    alpha = .5, 
+    color = "black"
+    ) +
+  geom_abline(
+    intercept = m8_int,
+    slope = m8_admnslp,
+    size=2.0, 
+    color="black"
+    ) +
+  labs(
+    x = "Within-Network Anterior DMN Functional Connectivity (z-scored)",
+    y = "Morningness (z-scored)",
+    title = "Anterior DMN Functional Connectivity and Circadian Preference"
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(size = 12),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10))
+m8_plot
+ggsave("aDMN_Z_36R_and_CMEP.png", m8_plot, width = 6, height =6)
+```
+
+###  mc correction
+```{r}
+
+p_all <- c(m6p, m7p, m8p)
+ # we have 6 effects tested against each other in 3 regressions. FDR is of those (discoveries) rejected null hypotheses, what's the expected value of those that are false (that are incorrect rejections of true null)?
+# uncorrected:0.4620 0.7080 0.5080 0.8170 0.0124 0.4144
+p.adjust(p_all, method = "fdr", n = length(p_all))
+#  corrected: 0.7620 0.8170 0.7620 0.8170 0.0744 0.7620
+
+```
+
+# hold controlling for cdi, siq, and asq?
+```{r}
+m9 <- lm(cmep_total_act_z ~ aDMN_Z_36R_z + asq_total_act + cdi_total_with_actigraphy + siq_total_with_actigraphy , data = dem_plus_act_clin_netcorrcmep_cent)
+summary(gvlma(m9))
+summary(m9)
+vif(m9)
+m9 <- lm(cmep_total_act_z ~ asq_total_act + cdi_total_with_actigraphy, data = dem_plus_act_clin_netcorrcmep_cent)
+vif(m9)
+summary(m9)
+plot_model(m9)
+```
+
+> does the interval really not matter? We replicate this analysis using only those who completed EMA, Act, and Scan within 7 days of each other in our "simultaneous script"
+
+# is tanner associated with aDMN?
+```{r}
+# association between pDMN and sleepiness during scan
+covtanner <- lm(aDMN_Z_36R_z ~ tanner_average_for_act_z + tanner_age_for_act_z, data = dem_plus_act_clin_netcorrcmep_cent)
+summary(covtanner)
+# no association between pDMN FC and tanner stage
+```
+
+-------------------------------------------------------------------------
+# obj sleep duration
+```{r}
+# sleep efficiency outliers
+OutVals = boxplot(dem_plus_act_clin_netcorr$sleep_time_hrs_mean)$out # 
+```
+
+
+## centering based on this sample
+I standardized tanner stage, age at tanner assessment, and bmi within each sex
+```{r}
+dem_plus_act_clin_netcorr_cent <-
+  dem_plus_act_clin_netcorr %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_ACT = factor(COVID_AHC_ACT),
+    eff_perc_mean_z = scale(eff_perc_mean),
+    sleep_time_hrs_mean_z = scale(sleep_time_hrs_mean),
+    household_income_act_z = scale(Household_Income_ACT),
+    sumsev_type_z = scale(sumsev_type),
+    asq_total_act_z = scale(asq_total_act),
+    cmep_total_act_z = scale(cmep_total_act),
+    admn_lecn_act_z = scale(admn_lecn_act),
+    admn_recn_act_z = scale(admn_recn_act),
+    pdmn_lecn_act_z = scale(pdmn_lecn_act),
+    pdmn_recn_act_z = scale(pdmn_recn_act),
+    pDMN_Z_36R_z = scale(pDMN_Z_36R),
+    aDMN_Z_36R_z = scale(aDMN_Z_36R),
+    Noise_brainstem_Z_36R_z = scale(Noise_brainstem_Z_36R)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_average_for_act_z = scale(tanner_average_for_act), # standardize within each sex
+    tanner_adrenal_act_z = scale(tanner_adrenal_act),
+    tanner_gonadal_act_z = scale(tanner_gonadal_act),
+    bmi_at_act_z = scale(BMI_ACT),
+    tanner_age_for_act_z = scale(tanner_age_for_act)
+  ) %>%
+  ungroup()
+```
+
+# test of potential covariates
+```{r}
+# corr btwn sleep eff and interval between act and scan
+cor.test(dem_plus_act_clin_netcorr_cent$sleep_time_hrs_mean, dem_plus_act_clin_netcorr_cent$interval_btwn_act_and_scan) # no corr, r = 0.1217741, p = 0.2612
+
+# corr btwn sleep eff and mean FD
+cor.test(dem_plus_act_clin_netcorr_cent$sleep_time_hrs_mean, dem_plus_act_clin_netcorr_cent$meanFD) # no corr, r = -0.1287733 , p = 0.2346
+
+# corr btwn sleep eff and age
+cor.test(dem_plus_act_clin_netcorr_cent$sleep_time_hrs_mean, dem_plus_act_clin_netcorr_cent$tanner_age_for_act)  # no corr, r = -0.02492253, p = 0.8188 (as seen in our puberty analysis)
+
+# corr btwn sleep eff and tanner
+cor.test(dem_plus_act_clin_netcorr_cent$sleep_time_hrs_mean, dem_plus_act_clin_netcorr_cent$tanner_average_for_act) # no corr, r = 0.1047741, p = 0.3341
+
+# association btwn sleep eff and sex
+summary(lm(sleep_time_hrs_mean ~ Sex, data = dem_plus_act_clin_netcorr_cent)) # no association, B = 0.2773, p = 0.204
+
+# corr btwn sleep eff and dperession severity
+cor.test(dem_plus_act_clin_netcorr_cent$sleep_time_hrs_mean, dem_plus_act_clin_netcorr_cent$cdi_total_with_actigraphy)  # no corr, r = 0.2063942, p = 0.05657
+
+# corr btwn sleep eff and SI severity
+cor.test(dem_plus_act_clin_netcorr_cent$sleep_time_hrs_mean, dem_plus_act_clin_netcorr_cent$siq_total_with_actigraphy)  # no corr, r = -0.0309999, p = 0.7876)
+
+# corr btwn sleep eff and perceived stress
+cor.test(dem_plus_act_clin_netcorr_cent$sleep_time_hrs_mean, dem_plus_act_clin_netcorr_cent$asq_total_act)  # no corr, r = 0.1258991, p = 0.2509
+```
+
+# associations between inter-network connectivity and sleep efficiency
+```{r}
+options(scipen = 999)
+
+m1 <- lm(sleep_time_hrs_mean_z  ~ Sex + admn_lecn_act_z + pdmn_lecn_act_z, data = dem_plus_act_clin_netcorr_cent)
+summary(gvlma(m1)) # assumptions met
+
+
+m2 <- lm(sleep_time_hrs_mean_z  ~ Sex + admn_recn_act_z + pdmn_recn_act_z, data = dem_plus_act_clin_netcorr_cent)
+summary(gvlma(m2)) # checks out
+
+```
+
+# associations between within-DMN connectivity and sleep
+- given we didn't preregister for parts of the  DMN, we will test the anteiror and posterior in one model
+```{r}
+m3 <- lm(sleep_time_hrs_mean_z ~ Sex + aDMN_Z_36R_z + pDMN_Z_36R_z, data = dem_plus_act_clin_netcorr_cent)
+summary(gvlma(m3)) # assumptions met
+
+```
+
+# associations betwen night before scan and connectivity
+```{r}
+
+# resetting contrasts (original:  1, More than usual | 2, Usual | 3, Less than usual; reset: 1, Usual | 2, More thank usual | 3, Less than usual)
+dem_plus_act_clin_netcorr_rem_cent$mrisurv_sleep_before_scan_usual <- relevel(dem_plus_act_clin_netcorr_rem_cent$mrisurv_sleep_before_scan_usual, ref = "2")
+cov3 <- lm(admn_lecn_act_z ~ mrisurv_sleep_before_scan_usual, data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov3)
+cov3 <- lm(pdmn_lecn_act_z ~ mrisurv_sleep_before_scan_usual, data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov3)
+cov3 <- lm(admn_recn_act_z ~ mrisurv_sleep_before_scan_usual, data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov3)
+cov3 <- lm(pdmn_recn_act_z ~ mrisurv_sleep_before_scan_usual, data = dem_plus_act_clin_netcorr_rem_cent) 
+summary(cov3)
+
+```
+
+# associations between within-DMN connectivity and sleep
+- given we didn't preregister for parts of the  DMN, we will test the anteiror and posterior in one model
+```{r}
+m8 <- lm(cmep_total_act_z ~ aDMN_Z_36R_z + pDMN_Z_36R_z, data = dem_plus_act_clin_netcorrcmep_cent)
+summary(gvlma(m8)) # assumptions met
+summary(m8)
+```
+

@@ -1,0 +1,1044 @@
+---
+title: "clust_stand_err_final"
+author: "Jackie"
+date: "7/21/2021"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+
+# libraries
+```{r,message=FALSE}
+library(tidyverse)
+library(lmtest)
+library(lubridate)
+library(pmdplyr)
+library(sandwich)
+library(performance)
+library(sjPlot)
+library(sjstats)
+```
+
+## functions
+```{r}
+getmode <- function(v, na.rm=TRUE) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+# function from ben bolker
+mylag <- function(x,lag) {
+  c(rep(NA,lag),head(x,-lag))
+}
+```
+
+# Read in data
+
+## Aggregating 
+In these types of data sampling situations (different frequency of assessment) – the typical solution for examination of coupling seems to be to aggregate to a common time-sampling frame (e.g., day-level) and locate coupling at that timescale.
+
+Bc my design was such that participants report their evening affect and next day sleep satisfactionj
+## sleep: EMA
+
+```{r, message=FALSE}
+mw_sleep_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/MW_daily_sleep_data_longform.csv"
+mw_sleep <- read_csv(mw_sleep_fp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID),
+    day = factor(day),
+    wday = factor(wday),
+    dayorder = factor(dayorder),
+    week = factor(week),
+    trigger_tod = "Morning",
+    trigger_tod = factor(trigger_tod)
+    ) %>%
+  dplyr::select(
+    ELS_ID,
+    triggerdate,
+    day,
+    dayorder,
+    sleep_trigger_time,
+    trigger_tod,
+    wday,
+    week,
+    everything(),
+    -Session
+  ) %>%
+  dplyr::rename(., triggertime = sleep_trigger_time) %>%
+  mutate(
+    day = factor(day)
+  ) %>%
+  mutate(
+    triggerdate = ymd(triggerdate),
+    day = day(triggerdate)
+  ) %>%
+  group_by(ELS_ID) %>% 
+  mutate(
+    dayorder = order(triggerdate)
+    ) %>%
+  dplyr::select(
+    ELS_ID,
+    triggerdate,
+    day,
+    dayorder,
+    trigger_tod,
+    starts_with("DailySleep")
+  ) %>%
+  mutate(
+    trigger_tod_order =
+      ifelse(
+        trigger_tod == "Morning",
+        "1",
+        NA
+        )
+    ) %>%
+  relocate(trigger_tod_order, .after = trigger_tod) %>%
+  mutate(
+    trigger_tod_order = as.numeric(trigger_tod_order)
+  ) %>%
+  group_by(ELS_ID) %>%
+  mutate(
+    dayorder = as.numeric(dayorder),
+    respnumber = dayorder - min(dayorder) + 1
+  ) %>%
+  filter(dayorder < 15) %>%
+  relocate(respnumber , .after = dayorder) %>%
+  mutate(
+    day_id =  time_variable(triggerdate, .method = "day")
+    ) %>%
+  relocate(day_id, .after = day) %>%
+  filter(day_id < 15) %>% 
+  dplyr::select(-c(day, dayorder)) # already aggregated by day
+  
+mw_sleep_select <-
+  mw_sleep %>%
+  dplyr::select(-c(day_id, respnumber, DailySleep_hrs))
+```
+
+## affect: EMA
+
+```{r, message=FALSE}
+mw_emo_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/MW_daily_emo_data_longform.csv"
+mw_emo <- read_csv(mw_emo_fp) %>%
+  dplyr::select(
+    ELS_ID,
+    mw_start_date,
+    emo_trigger_time,
+    emo_trigger_recode,
+    triggerdate,
+    day,
+    wday,
+    dayorder,
+    day_id,
+    neg_total,
+    pos_total,
+    data_num_obs,
+    n_per_tod,
+    week
+  ) %>%
+  rename(
+    respnumber = dayorder
+  )
+
+mw_emo_filt <-
+  mw_emo %>%
+  mutate(
+    trigger_tod_order =
+      ifelse(
+        emo_trigger_recode == "Morning",
+        "1",
+        NA
+        ),
+    trigger_tod_order =
+      ifelse(
+        emo_trigger_recode == "Afternoon",
+        "2",
+        trigger_tod_order
+        ),
+    trigger_tod_order =
+      ifelse(
+        emo_trigger_recode == "Evening",
+        "3",
+        trigger_tod_order
+        )
+    ) %>%
+  relocate(trigger_tod_order, .after = emo_trigger_recode) %>%
+  mutate(
+    trigger_tod_order = as.numeric(trigger_tod_order),
+    iddrop =
+      ifelse(
+        ELS_ID == "199" &
+          str_detect(mw_start_date, "2021-02"),
+        "drop",
+        NA
+      )
+  ) %>%
+  filter(is.na(iddrop)) %>%
+  dplyr::select(-iddrop) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  )
+
+## reading in RR
+emorrfp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/mw_daily_emo_rr.csv" 
+emorr <- 
+  read_csv(emorrfp) %>%
+  dplyr::select(
+    ELS_ID,
+    Enrolled,
+    Daily_Emotion_Responses,
+    emo_resp_rate
+  ) %>%
+  mutate(
+    dup = duplicated(ELS_ID), # 120 (april 2019), 201 (July 2020), 199 (april 2021 - the one with 7 responses)
+    drop =
+      ifelse(
+        ELS_ID == "120" &
+          Enrolled == "09-07-2021 10:35:28",
+        "drop",
+        NA
+        ),
+    drop =
+      ifelse(
+        ELS_ID == "201" &
+          Enrolled == "Not Enrolled",
+        "drop",
+        drop
+      ),
+    drop = 
+      ifelse(
+        ELS_ID == "199" &
+          Daily_Emotion_Responses == "31",
+        "drop",
+        drop
+      )
+  ) %>%
+  filter(is.na(drop)) %>%
+  dplyr::select(-drop, -dup) %>%
+  mutate(
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+  )
+  
+# merging RR with the daily emo df
+mw_emo_filt_merge <-
+  left_join(
+    mw_emo_filt,
+    emorr,
+    df = "ELS_ID"
+  ) %>%
+  rename(trigger_tod = emo_trigger_recode) %>%
+  mutate(trigger_tod = factor(trigger_tod))
+```
+
+```{r, message=FALSE}
+mw_icafp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/3_study3/mw_36R_clean_sens.csv" 
+mw_ica <- 
+  read_csv(mw_icafp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) 
+```
+
+# Merging
+
+```{r}
+# just the EMA stuff
+mw_merge <-
+  left_join(
+    mw_emo_filt_merge,
+    mw_sleep_select,
+    by = c("ELS_ID", "triggerdate", "trigger_tod", "trigger_tod_order")
+  ) %>%
+  mutate(
+    triggerdate = ymd(triggerdate),
+    day = day(triggerdate)
+  ) %>%
+  group_by(ELS_ID) %>% 
+  mutate(
+    day_id =  time_variable(triggerdate, .method = "day"),    
+    dayorder = order(triggerdate),
+    dayorder = as.numeric(dayorder),
+    respnumber = dayorder - min(dayorder) + 0,
+    day_id = day_id - min(day_id) + 0,
+    trigger_tod_order = trigger_tod_order - min(trigger_tod_order) + 0
+    ) %>%
+  dplyr::select(
+    ELS_ID, triggerdate, day_id, respnumber, trigger_tod, trigger_tod_order, DailySleep_satisfaction, DailySleep_hrs_rec, neg_total, pos_total, emo_resp_rate 
+  )
+
+mw_merge %>%
+  distinct(ELS_ID) # 131
+```
+
+### merging with brain data in case I decide to look at this based on my other brain findings
+
+```{r}
+mw_merge <-
+  left_join(
+    mw_merge,
+    mw_ica,
+    by = "ELS_ID"
+  )
+```
+
+## MW EMO Start Date
+```{r,message=FALSE}
+emo_rr_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/mw_daily_emo_rr.csv"
+emo_rr <- 
+  read_csv(emo_rr_fp) %>%
+  dplyr::select(
+    ELS_ID, Identifier, Enrolled, emo_resp_rate
+  ) %>%
+  rename(User_ID = Identifier) %>%
+  mutate(
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID),
+    dup = duplicated(User_ID)
+  )  %>% # keeping ELS_ID 201 and 199 with april enrolled date
+mutate(
+    drop = 
+      ifelse(
+        ELS_ID == "201" &
+          Enrolled == "Not Enrolled",
+        "drop",
+        NA
+        )
+  ) %>%
+  filter(is.na(drop)) %>%
+  dplyr::select(ELS_ID, emo_resp_rate)
+```
+# Reading in pubertal and demo data
+
+> the suffix "_mw" or "_act" indicates whether that Tanner assessemnt was administered closer to the actigraphy or EMA data. 154 participants had usable actigraphy or EMA data; however, 6 participants were excluded based on being in early puberty (Tanner stage < 3), bringing our total to 148 participants. 136 had usable actigraphy data and 111 had usable EMA data via Metricwire data. 54% of our sample (N=80) completed actigraphy and EMA components simultaneously (overlapping at least 7 days). This was not by design, but because of participant scheduling/contacting issues or bc of participant issues, the other half of the participants either completed both components several months apart from each other, _or_ they completed only one of the componets (either EMA _or_ actigraphy due to various reasons (e.g., didn't want to wear a watch, didn't want the app on their phones, data from one component wasn't usable, etc...)).
+To include as many participants as possible in our analyses (to increase generalizability and statistical power), we conducted the EMA and actigraphy analyses separately.
+
+```{r, message=FALSE}
+# full AHC sample with pubertal and demographic info
+pub_demo_act_mw_comb_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/dem_and_tanner_mw_act_comb_merge.csv"
+pub_demo <-
+  read_csv(pub_demo_act_mw_comb_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID))%>%
+  dplyr::select(
+    ELS_ID,
+    SIMUL_AHC,
+    tanner_date_for_act,
+    tanner_date_for_mw,
+    tanner_average_for_act,
+    tanner_average_for_mw,
+    tanner_adrenal_act,
+    tanner_adrenal_mw,
+    tanner_gonadal_act,
+    tanner_gonadal_mw,
+    tanner_age_for_act,
+    tanner_age_for_mw,
+    COVID_AHC_MW,
+    COVID_AHC_ACT,
+    Sex,
+    BMI_MW,
+    BMI_ACT,
+    Household_Income_MW,
+    Household_Income_ACT,
+    SIMUL_AHC,
+    cmep_total_mw,
+    cmep_total_act,
+    sumsev_type
+  )
+
+hormonedatafp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/1_study1/pub_mw_hormones_clean.csv"
+hormonedata <-
+  read_csv(hormonedatafp) %>%
+  dplyr::select(
+    ELS_ID,
+    ends_with("_clean")
+  ) %>%
+  mutate(ELS_ID = factor(ELS_ID))
+
+asqfp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/2_study2/asqmw.csv"
+asq <-
+  read_csv(asqfp) %>%
+  mutate(ELS_ID = factor(ELS_ID))
+```
+
+## merging with EMA data
+```{r}
+mw_merge_order_dem_all <-
+  left_join(
+    mw_merge,
+    pub_demo,
+    by = "ELS_ID"
+  )
+
+mw_merge_order_dem_all <-
+  left_join(
+    mw_merge_order_dem_all,
+    hormonedata,
+    by = "ELS_ID"
+  )
+
+mw_merge_order_dem_all <-
+  left_join(
+    mw_merge_order_dem_all,
+    asq,
+    by = "ELS_ID"
+  ) %>%
+  drop_na(tanner_average_for_mw)
+```
+
+# Summary
+
+```{r}
+mw_merge_sum_ema <-
+  mw_merge_order_dem_all %>%
+  distinct(ELS_ID)
+# 106 IDs have EMA data (sleep + affect); 
+
+mw_merge_order_dem_all%>%
+  group_by(ELS_ID) %>%
+  summarize(
+    daymax = length(day_id)
+  )
+
+mw_merge_order_dem_all2 <-
+  mw_merge_order_dem_all %>%
+  group_by(ELS_ID) %>%
+  mutate(
+    daymax = length(day_id),
+    toofewdays =
+      ifelse(
+        daymax < 3, # dropping fewer than 3 days of observations
+        "drop",
+        NA
+        )
+    ) %>%
+  filter(
+    is.na(toofewdays)
+  ) %>%
+  dplyr::select(-daymax, -toofewdays)
+
+mw_merge_order_dem_all2 %>%
+  group_by(ELS_ID) %>%
+  summarize(
+    daymax = length(day_id)
+  )
+# 106 participants have 3 or more days of sleep and affect data
+
+```
+
+```{r}
+summary(as.integer(table(mw_merge_order_dem_all2$ELS_ID))) # els ids subj
+```
+
+```{r}
+hist(mw_merge_order_dem_all2$neg_total)
+library(moments)
+
+skewness(mw_merge_order_dem_all2$neg_total) # 0.9293557
+
+mw_merge_order_dem_all2 <-
+  mw_merge_order_dem_all2 %>%
+  mutate(
+    neg_total_log = log10(neg_total),
+    neg_total_sqrt = sqrt(neg_total)
+  )
+skewness(mw_merge_order_dem_all2$neg_total_log) # -1.301284 ooo terrible
+skewness(mw_merge_order_dem_all2$neg_total_sqrt) # -0.04143427 much better
+
+
+summary(mw_merge_order_dem_all2$neg_total_sqrt)
+mean(mw_merge_order_dem_all2$neg_total_sqrt)
+sd(mw_merge_order_dem_all2$neg_total_sqrt)
+```
+
+
+```{r}
+neg_total_sqrt_hist <- 
+  mw_merge_order_dem_all2 %>%
+  ggplot(
+    aes(x = neg_total_sqrt)
+  ) +
+  geom_histogram(color = "black", alpha = .5) +
+  theme_classic() +
+  labs(
+    x = "Daily Negative Affect",
+    title = "Distribution of Daily Negative Affect"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  )
+neg_total_sqrt_hist
+
+
+pos_total_sqrt_hist <- 
+  mw_merge_order_dem_all2 %>%
+  ggplot(
+    aes(x = pos_total)
+  ) +
+  geom_histogram(color = "black", alpha = .5) +
+  theme_classic() +
+  labs(
+    x = "Daily Positive Affect",
+    title = "Distribution of Daily Positive Affect"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  )
+pos_total_sqrt_hist
+
+library(gridExtra)
+library(cowplot)
+pana_dist <- 
+  cowplot::plot_grid(
+    neg_total_sqrt_hist, 
+    pos_total_sqrt_hist,
+    labels = c('A', 'B'), 
+    label_size = 10
+    )
+ggsave("pana_dist.png", pana_dist, width = 7, height = 3.5)
+```
+## how many clusters do we have?
+```{r}
+sumclust <-
+  mw_merge_order_dem_all2 %>%
+  distinct(ELS_ID)
+```
+
+# Option 1: the sandwich package
+The `sandwich` package implements several methods for robust covariance estimators, including clustered SEs. Details are explained in __Zeileis et al. 2020__. The accompanying `lmtest` package provides functions for coefficient tests that take into account the calculated robust covariance estimates.
+
+As explained initially, the parameter estimates from our model are fine despite the clustered structure of our data. But the SEs are likely biased downward and need to be corrected.
+
+1) We need to use `coeftest` from the `lmtest` package;
+2) we need to pass it our model and either a function to calculate the covariance matrix or an already estimated covariance matrix to the `vcov` parameter;
+3) we need to specify a cluster variable in the cluster parameter.
+
+The `sandwich` package provides several functions for estimating robust covariance matrices. We need `vcovCL` for clustered covariance estimation and will pass this function as vcov parameter. Furthermore, we cluster by subject ID, so the cluster variable is ELS_ID
+# Clustered Robust Standard Errors (CR-SE)
+
+From "On the Unnecessary Ubiquity of Hierarchical Linear Modeling" by McNeish et al., 2016
+"CR-SEs alter the calculation of the regression coefficient variance to accommodate assumption violations (i.e., homogeneity of variance and independence).
+Conceptually, with CR-SEs, first a standard single-level model (e.g., with OLS or maximum likelihood as shown in Equation 3) is used to estimate the regression coefficients (e.g., ). In the presence of clustering, bias in the standard error estimates are the primary concern, so the regression coefficients with CR-SEs will be identical to what would be obtained if the clustering was completely ignored."
+
+## showing clusters of ELS_IDs in relation to neg affect
+```{r}
+mw_merge_cent <-
+  mw_merge_order_dem_all2 %>%
+  dplyr::select(
+    -c(ends_with("_act"), ends_with("_ACT"))
+  ) %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_MW = factor(COVID_AHC_MW),
+    sumsev_type_z = scale(sumsev_type),
+    dhea_clean_z = scale(dhea_clean),
+    cort_clean_z = scale(cort_clean),
+    test_clean_z = scale(test_clean),
+    cmep_total_mw_z = scale(cmep_total_mw),
+    asq_total_mw_z = scale(asq_total_mw)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_average_for_mw_z = scale(tanner_average_for_mw), # standardizing tanner average within each sex
+    tanner_adrenal_mw_z = scale(tanner_adrenal_mw), # standardizing tanner adrenal within each sex
+    tanner_gonadal_mw_z = scale(tanner_gonadal_mw), # standardizing tnaner gonadal within each sex
+    bmi_at_mw_z = scale(BMI_MW), # standardizing bmi within each sex
+    tanner_age_for_mw_z = scale(tanner_age_for_mw) # standardizing age within each sex
+  ) %>%
+  ungroup() 
+
+library(lmerTest)
+mw_merge_cent_randids <-
+  mw_merge_cent[1:234,]
+mw_merge_cent_randids %>%
+  ggplot(
+    aes(
+      x = day_id,
+      y = neg_total_sqrt,
+      color = ELS_ID
+    )
+  ) +
+  geom_point()+
+  facet_wrap(~ELS_ID) +
+  theme_classic()
+
+library(misty)
+multilevel.icc(mw_merge_cent$neg_total_sqrt, group = mw_merge_cent$ELS_ID, type = 1, method = "lme4") # 0.6100043
+mod <- lmer(neg_total_sqrt ~ 1 + (1|ELS_ID), data = mw_merge_cent)
+icc(mod)
+multilevel.icc(mw_merge_cent$pos_total, group = mw_merge_cent$ELS_ID, type = 1, method = "lme4") # 0.4910874
+multilevel.icc(mw_merge_cent$DailySleep_satisfaction, group = mw_merge_cent$ELS_ID, type = 1, method = "lme4") # 0.4152467
+```
+
+# Hypothesis 1: Higher negative affect and lower positive affect and will be associated with lower subjective sleep satisfaction, but not with poorer objective sleep efficiency or lower sleep duration
+testing for potential covariates
+```{r}
+c7 <- lm(scale(DailySleep_satisfaction) ~ bmi_at_mw_z, data = mw_merge_cent)
+c7_c <- coeftest(c7, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c7_c
+c7b <- lm(scale(DailySleep_hrs_rec) ~ bmi_at_mw_z, data = mw_merge_cent)
+c7_d <- coeftest(c7b, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c7_d
+
+c8 <- lm(scale(DailySleep_satisfaction) ~ scale(Household_Income_MW), data = mw_merge_cent)
+c8_c <- coeftest(c8, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c8_c
+c8b <- lm(scale(DailySleep_hrs_rec) ~ scale(Household_Income_MW), data = mw_merge_cent)
+c8_d <- coeftest(c8b, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c8_d
+
+c9 <- lm(scale(DailySleep_satisfaction) ~ scale(sumsev_type), data = mw_merge_cent)
+c9_c <- coeftest(c9, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c9_c
+c9b <- lm(scale(DailySleep_hrs_rec) ~ scale(sumsev_type), data = mw_merge_cent)
+c9_d <- coeftest(c9b, vcov = vcovCL, cluster = ~ELS_ID) # yes
+c9_d
+
+c10 <- lm(scale(DailySleep_satisfaction) ~ Sex, data = mw_merge_cent)
+c10_c <- coeftest(c10, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c10_c
+c10b <- lm(scale(DailySleep_hrs_rec) ~ Sex, data = mw_merge_cent)
+c10_d <- coeftest(c10b, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c10_d
+
+
+c11 <- lm(scale(DailySleep_satisfaction) ~ scale(asq_total_mw), data = mw_merge_cent)
+c11_c <- coeftest(c11, vcov = vcovCL, cluster = ~ELS_ID) # yes B=-0.218765, p=0.003652
+c11_c
+c11b <- lm(scale(DailySleep_hrs_rec) ~ scale(asq_total_mw), data = mw_merge_cent)
+c11_d <- coeftest(c11b, vcov = vcovCL, cluster = ~ELS_ID) # yes B=-0.218765, p=0.003652
+c11_d
+```
+
+### making sure my pubertal stage and sleep satisfaction association holds using this type of model (adjusting for clustered IDs)
+```{r}
+m2 <- lm(scale(DailySleep_satisfaction) ~  tanner_average_for_mw_z + tanner_age_for_mw_z, data = mw_merge_cent)
+# also holds controlling for asq
+m2cov <- lm(scale(DailySleep_satisfaction) ~  scale(asq_total_mw) + tanner_average_for_mw_z + tanner_age_for_mw_z, data = mw_merge_cent)
+summary(m2cov)
+car::vif(m2)
+m2_c <- coeftest(m2, vcov = vcovCL, cluster = ~ELS_ID)
+m2_c
+confint(m2_c)
+m2_cov <- coeftest(m2cov, vcov = vcovCL, cluster = ~ELS_ID)
+m2_cov
+confint(m2_cov)
+
+tanint2 <- summary(m2)$coefficients[1,1] # fine to extract from the OLS bc reg coefs don't change (just the SEs)
+tanslp2 <- summary(m2)$coefficients[2,1]
+
+mw_merge_cent %>%
+  ggplot(
+    aes(
+      x = tanner_average_for_mw_z,
+      y = scale(DailySleep_satisfaction)
+    )
+  ) +
+  geom_point(size = 2, alpha = .5) +
+  geom_abline(
+    intercept = tanint2, 
+    slope = tanslp2,
+    size=2
+    ) +
+  theme_classic() +
+  labs(
+    x = "Tanner Score",
+    y = "Sleep Satisfaction",
+    title = "Association between Pubertal Stage and Sleep Satisfaction"
+  ) + 
+  theme(
+    axis.text = element_text(size = 12, angle = 30, hjust = 1),
+    axis.title = element_text(size = 12),
+    plot.title = element_text(size = 12)
+  ) 
+
+ggsave("tan_and_sleep_crse.png", width = 6, height =6)
+
+
+# MLM
+level2modds<- lmer(scale(DailySleep_satisfaction)  ~  tanner_average_for_mw_z + scale(asq_total_mw) + tanner_age_for_mw_z + day_id + (1| ELS_ID), na.action = na.exclude, data = mw_merge_cent)
+tab_model(level2modds, p.val = "kr") 
+# aligns with cr-se
+```
+
+## testing if postive and negative affect are associated with sleep sat controlling for perceived stress (and then also tanner)
+```{r}
+m3 <- lm(scale(DailySleep_satisfaction) ~ scale(asq_total_mw) + scale(neg_total_sqrt) + scale(pos_total), data = mw_merge_cent)
+summary(m3)
+car::vif(m3)
+m3c <- coeftest(m3, vcov = vcovCL, cluster = ~ELS_ID)
+confint(m3c)
+
+
+m3cov <- lm(scale(DailySleep_satisfaction) ~ scale(asq_total_mw) + scale(neg_total_sqrt) + scale(pos_total) +  tanner_average_for_mw_z +  tanner_age_for_mw_z, data = mw_merge_cent)
+summary(m3cov)
+car::vif(m3cov)
+m3cov_c <- coeftest(m3cov, vcov = vcovCL, cluster = ~ELS_ID)
+confint(m3cov_c)
+
+negint3 <- summary(m3)$coefficients[1,1] # fine to extract from the OLS bc reg coefs don't change (just the SEs)
+negslp3 <- summary(m3)$coefficients[3,1]
+na_sleep <- mw_merge_cent %>%
+  ggplot(
+    aes(
+      x = scale(neg_total_sqrt),
+      y = scale(DailySleep_satisfaction)
+    )
+  ) +
+  geom_point(size = 2, alpha = .5, color = "black") +
+  geom_abline(
+    intercept = negint3, 
+    slope = negslp3,
+    size=2,
+    color = "black"
+    ) +
+  theme_classic() +
+  labs(
+    x = "Negative Affect",
+    y = "Sleep Satisfaction"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 12),
+    plot.title = element_text(size = 12)
+  )
+
+posint3 <- summary(m3)$coefficients[1,1] # fine to extract from the OLS bc reg coefs don't change (just the SEs)
+posslp3 <- summary(m3)$coefficients[4,1]
+pa_sleep <- mw_merge_cent %>%
+  ggplot(
+    aes(
+      x = scale(pos_total),
+      y = scale(DailySleep_satisfaction)
+    )
+  ) +
+  geom_point(size = 2, alpha = .5, color = "black") +
+  geom_abline(
+    intercept = posint3, 
+    slope = posslp3,
+    size=2,
+    color = "black"
+    ) +
+  theme_classic() +
+  labs(
+    x = "Positive Affect",
+    y = "Sleep Satisfaction"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 12),
+    plot.title = element_text(size = 12)
+  )
+library(gridExtra)
+library(cowplot)
+mwsleepaffect <- 
+  cowplot::plot_grid(
+    na_sleep, 
+    pa_sleep, 
+    labels = c('A', 'B'), 
+    label_size = 10
+    )
+ggsave("sleep_NA_PA_crse.png", mwsleepaffect, width = 9, height = 5)
+# MLM
+level3modds<- lmer(scale(DailySleep_satisfaction)  ~  tanner_average_for_mw_z + scale(asq_total_mw) + scale(neg_total_sqrt) + scale(pos_total) + day_id + (1| ELS_ID), na.action = na.exclude, data = mw_merge_cent)
+tab_model(level3modds, p.val = "kr") 
+# aligns with cr-se
+```
+
+## testing if postive and negative affect are associated with sleep duration controlling for perceived stress (and then also tanner)
+```{r}
+
+m4 <- lm(scale(DailySleep_hrs_rec) ~ scale(sumsev_type) + scale(neg_total_sqrt) + scale(pos_total), data = mw_merge_cent)
+summary(m4)
+car::vif(m4)
+m4c <- coeftest(m4, vcov = vcovCL, cluster = ~ELS_ID)
+confint(m4c)
+```
+
+
+# Hypothesis 2:  Higher Tanner stage is associated with higher negative affect and lower positive affect
+testing for potential covariates
+```{r}
+c1 <- lm(scale(neg_total_sqrt) ~ bmi_at_mw_z, data = mw_merge_cent)
+c1_c <- coeftest(c1, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c1_c
+
+c2 <- lm(scale(neg_total_sqrt) ~ scale(Household_Income_MW), data = mw_merge_cent)
+c2_c <- coeftest(c2, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c2_c
+
+c3 <- lm(scale(neg_total_sqrt) ~ scale(sumsev_type), data = mw_merge_cent)
+c3_c <- coeftest(c3, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c3_c
+
+mw_merge_cent <-
+  mw_merge_cent %>%
+  mutate(
+    Sex_rec =
+      recode_factor(Sex, "1" = "Male", "2" = "Female")
+  )
+c4 <- lm(scale(neg_total_sqrt) ~ Sex_rec, data = mw_merge_cent)
+c4_c <- coeftest(c4, vcov = vcovCL, cluster = ~ELS_ID) # yes (males compared to females have lower neg affect)
+c4_c
+mw_merge_cent %>%
+  filter(Sex_rec == "Female") %>%
+  summarise(
+    neg_total_mean = mean(neg_total),
+    neg_total_sd = sd(neg_total)
+  )
+mw_merge_cent %>%
+  filter(Sex_rec == "Male") %>%
+  summarise(
+    neg_total_mean = mean(neg_total),
+    neg_total_sd = sd(neg_total)
+  )
+
+c5 <- lm(scale(neg_total_sqrt) ~ COVID_AHC_MW, data = mw_merge_cent)
+c5_c <- coeftest(c5, vcov = vcovCL, cluster = ~ELS_ID) # no
+c5_c
+
+c6 <- lm(scale(neg_total_sqrt) ~ scale(asq_total_mw), data = mw_merge_cent)
+c6_c <- coeftest(c6, vcov = vcovCL, cluster = ~ELS_ID) # yes
+c6_c
+
+c7 <- lm(scale(neg_total_sqrt) ~ scale(emo_resp_rate), data = mw_merge_cent)
+c7_c <- coeftest(c7, vcov = vcovCL, cluster = ~ELS_ID) # no
+c7_c
+```
+
+```{r}
+# testing whether tanner_average on its own is associated with NA
+m1 <- lm(scale(neg_total_sqrt) ~ tanner_average_for_mw_z + tanner_age_for_mw_z, data = mw_merge_cent)
+summary(m1)
+car::vif(m1) # no multicollinearity
+m1_c <- coeftest(m1, vcov = vcovCL, cluster = ~ELS_ID)
+m1_c
+confint(m1_c)
+
+## adding covariates of Sex and Adolescent perceived stress
+m1_cov <- lm(scale(neg_total_sqrt) ~ tanner_average_for_mw_z + tanner_age_for_mw_z +Sex + scale(asq_total_mw), data = mw_merge_cent)
+summary(m1_cov) # effects retained
+car::vif(m1_cov) # no multicollinearity
+m1_cov_c <- coeftest(m1_cov, vcov = vcovCL, cluster = ~ELS_ID)
+m1_cov_c
+confint(m1_cov_c)
+
+tanint <- summary(m1)$coefficients[1,1] # fine to extract from the OLS bc reg coefs don't change (just the SEs)
+tanslp <- summary(m1)$coefficients[2,1]
+
+mw_merge_cent %>%
+  ggplot(
+    aes(
+      x = tanner_average_for_mw_z,
+      y = scale(neg_total_sqrt)
+    )
+  ) +
+  geom_jitter(size = 2, alpha = .3) +
+  geom_abline(
+    intercept = tanint,
+    slope = tanslp,
+    size = 2
+    )+
+  theme_classic() +
+  labs(
+    x = "Tanner Average",
+    y = "Negative Affect",
+    title = "Association between Pubertal Stage and Negative Affect"
+  ) + 
+  theme(
+    axis.text = element_text(size = 10, angle = 30, hjust = 1),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 10)
+  )
+ggsave("tan.negaffect_crse.png", width = 6, height = 6)
+
+# MLM
+level2modna<- lmer(neg_total_sqrt ~  tanner_average_for_mw_z + tanner_age_for_mw_z + scale(asq_total_mw) + Sex + day_id + (1| ELS_ID), na.action = na.exclude, data = mw_merge_cent)
+tab_model(level2modna, p.val = "kr") 
+# aligns with cr-se
+```
+
+```{r}
+# testing whether tanner_average on its own is associated with pa
+c1 <- lm(scale(pos_total) ~ bmi_at_mw_z, data = mw_merge_cent)
+c1_c <- coeftest(c1, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c1_c
+c2 <- lm(scale(pos_total) ~ scale(Household_Income_MW), data = mw_merge_cent)
+c2_c <- coeftest(c2, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c2_c
+c3 <- lm(scale(pos_total) ~ scale(sumsev_type), data = mw_merge_cent)
+c3_c <- coeftest(c3, vcov = vcovCL, cluster = ~ELS_ID) # nope
+c3_c
+c4 <- lm(scale(pos_total) ~ Sex_rec, data = mw_merge_cent)
+c4_c <- coeftest(c4, vcov = vcovCL, cluster = ~ELS_ID) # no
+c4_c
+mw_merge_cent %>%
+  filter(Sex_rec == "Female") %>%
+  summarise(
+    pamean = mean(pos_total),
+    pasd = sd(pos_total)
+  )
+mw_merge_cent %>%
+  filter(Sex_rec == "Male") %>%
+  summarise(
+    pamean = mean(pos_total),
+    pasd = sd(pos_total)
+  )
+
+
+c5 <- lm(scale(pos_total) ~ COVID_AHC_MW, data = mw_merge_cent)
+c5_c <- coeftest(c5, vcov = vcovCL, cluster = ~ELS_ID) # no
+c5_c
+c6 <- lm(scale(pos_total) ~ scale(asq_total_mw), data = mw_merge_cent)
+c6_c <- coeftest(c6, vcov = vcovCL, cluster = ~ELS_ID) # yes
+c6_c
+c7 <- lm(scale(pos_total) ~ scale(emo_resp_rate), data = mw_merge_cent)
+c7_c <- coeftest(c7, vcov = vcovCL, cluster = ~ELS_ID) # no
+c7_c
+
+m1pa <- lm(scale(pos_total) ~ tanner_average_for_mw_z + tanner_age_for_mw_z, data = mw_merge_cent)
+summary(m1pa)
+m1pa_c <- coeftest(m1pa, vcov = vcovCL, cluster = ~ELS_ID)
+m1pa_c
+confint(m1pa_c)
+
+m1pacov <- lm(scale(pos_total) ~ tanner_average_for_mw_z + tanner_age_for_mw_z + scale(asq_total_mw), data = mw_merge_cent)
+summary(m1pacov)
+car::vif(m1pacov) # no multicollinearity
+m1pa_c_cov <- coeftest(m1pacov, vcov = vcovCL, cluster = ~ELS_ID)
+m1pa_c_cov
+confint(m1pa_c_cov)
+
+# MLM
+level2modpa<- lmer(scale(pos_total)  ~  tanner_average_for_mw_z + tanner_age_for_mw_z + scale(asq_total_mw) + day_id + (1| ELS_ID), na.action = na.exclude, data = mw_merge_cent)
+tab_model(level2modpa, p.val = "kr") 
+# aligns with cr-se
+```
+
+
+## is objective sleep associated with affect
+
+### reading in data
+
+```{r,message=FALSE}
+actfp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/SimultaneousAHC/act_mw_simultaneous.csv"
+act <-
+  read_csv(actfp) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  )
+demoact <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/SimultaneousAHC/dem_and_tanner_mw_act_simultaneous.csv"
+demoact<-
+  read_csv(demoact) %>%
+  mutate(
+    ELS_ID = factor(ELS_ID)
+  )
+```
+
+```{r}
+# merging RR with the daily emo df
+emaact <-
+  left_join(
+    act,
+    mw_emo_filt_merge,
+    by = c("ELS_ID", "triggerdate") 
+  ) %>%
+  drop_na(efficiency)
+
+emaact %>%
+  distinct(ELS_ID)
+
+emaact_all <-
+  left_join(
+    emaact,
+    demoact,
+    by = "ELS_ID"
+  )
+
+emaact_all %>%
+  distinct(ELS_ID)
+
+```
+
+```{r}
+emaact_allcent <-
+  emaact_all %>%
+  dplyr::select(
+    -c(ends_with("_mw"), ends_with("_MW"))
+  ) %>%
+  mutate(
+    Sex = factor(Sex),
+    COVID_AHC_ACT = factor(COVID_AHC_ACT),
+    sumsev_type_z = scale(sumsev_type),
+    cmep_total_act_z = scale(cmep_total_act),
+    asq_total_act_z = scale(asq_total_act)
+    ) %>%
+  group_by(Sex) %>%
+  mutate(
+    tanner_average_for_act_z = scale(tanner_average_for_act), # standardizing tanner average within each sex
+    tanner_adrenal_act_z = scale(tanner_adrenal_act), # standardizing tanner adrenal within each sex
+    tanner_gonadal_act_z = scale(tanner_gonadal_act), # standardizing tnaner gonadal within each sex
+    bmi_at_act_z = scale(BMI_ACT), # standardizing bmi within each sex
+    tanner_age_for_act_z = scale(tanner_age_for_act) # standardizing age within each sex
+  ) %>%
+  ungroup() 
+
+```
+
+testing for potential covariates
+```{r}
+c13 <- lm(scale(efficiency) ~ bmi_at_act_z, data = emaact_allcent)
+c13_c <- coeftest(c13, vcov = vcovCL, cluster = ~ELS_ID) # nope
+
+c14 <- lm(scale(efficiency) ~ scale(Household_Income_ACT), data = emaact_allcent)
+c14_c <- coeftest(c14, vcov = vcovCL, cluster = ~ELS_ID) # nope
+
+c15 <- lm(scale(efficiency) ~ scale(sumsev_type), data = emaact_allcent)
+c15_c <- coeftest(c15, vcov = vcovCL, cluster = ~ELS_ID) # nope
+
+c16<- lm(scale(efficiency) ~ Sex, data = emaact_allcent)
+c16_c <- coeftest(c16, vcov = vcovCL, cluster = ~ELS_ID) # nope
+
+c17 <- lm(scale(efficiency) ~ asq_total_act_z, data = emaact_allcent)
+c17_c <- coeftest(c17, vcov = vcovCL, cluster = ~ELS_ID) # no
+```
+
+
+```{r}
+library(moments)
+
+skewness(emaact_allcent$efficiency) # -1.757371
+skewness(emaact_allcent$sleep_time_hrs) # -0.3951045
+skewness(emaact_allcent$neg_total) # 0.9783957
+
+emaact_allcent <-
+  emaact_allcent %>%
+  mutate(
+    efficiency_sqrt = sqrt(max(efficiency+1) - efficiency),
+    efficiency_log = log10(max(efficiency+1) - efficiency) ,
+    sleeptime_sqrt = sqrt(max(efficiency+1) - sleep_time_hrs),
+    sleeptime_log = log10(max(efficiency+1) - sleep_time_hrs) ,    
+    neg_total_sqrt = sqrt(neg_total),
+    neg_total_log = log(neg_total)
+  )
+skewness(emaact_allcent$efficiency_sqrt) # 0.755437  ehh
+skewness(emaact_allcent$efficiency_log) # -0.3352765 better
+skewness(emaact_allcent$sleeptime_sqrt) # 0.3677143  better
+skewness(emaact_allcent$sleeptime_log) # 0.340609 (choosing the sqrt transform bc direction is closer to raw)
+skewness(emaact_allcent$neg_total_sqrt) # -0.02112807  ehh
+skewness(emaact_allcent$neg_total_log) # -1.292901 better
+
+
+m4 <- lm(scale(efficiency_sqrt) ~ scale(neg_total_sqrt) + scale(pos_total), data = emaact_allcent)
+summary(m4)
+m4_c <- coeftest(m4, vcov = vcovCL, cluster = ~ELS_ID)
+confint(m4_c)
+
+m5 <- lm(scale(sleeptime_sqrt) ~ scale(neg_total_sqrt) + scale(pos_total), data = emaact_allcent)
+summary(m5)
+m5_c <- coeftest(m5, vcov = vcovCL, cluster = ~ELS_ID)
+confint(m5_c)
+```

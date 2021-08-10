@@ -1,0 +1,313 @@
+---
+title: "1_mw_sleep_affect_and_pubertal_stage"
+author: "Jackie"
+date: "06/2/21; 8/4/21"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+#Load Libraries
+```{r, message=FALSE}
+library(tidyverse)
+library(modelr)
+library(foreign)
+library(readxl)
+library(haven) 
+library(expss)
+library(chron)
+library(hms)
+library(lubridate)
+library(googlesheets4)
+library(googledrive)
+library(psych)
+library(pmdplyr)
+```
+
+# Reading in mw and puberty data
+```{r filepaths}
+# full AHC sample with pubertal and demographic info
+pub_demo_act_mw_comb_fp <- "~/Box/Mooddata_Coordinating/1_Lab_Coordinating/Users/JackieSchwartz/Dissertation/0_MW_Act_Demo_Descriptives/dem_and_tanner_mw_act_comb_merge.csv"
+mw_mood_fp <- "~/Box/Mooddata_Coordinating/ELS_RDoC/At Home Components/3. MetricWire/Survey Monitoring/MW_curated_data/survey_data/daily_emotion.csv"
+```
+
+```{r, message=FALSE}
+demo <- read_csv(pub_demo_act_mw_comb_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+
+mw_mood <-read_csv(mw_mood_fp) %>%
+  mutate(ELS_ID = factor(ELS_ID)) %>%
+  as_tibble()
+```
+
+### cleaning
+```{r only child sleep}
+mw_mood_clean <-
+  mw_mood %>%
+  mutate(
+    ELS_ID =
+      str_remove_all(ELS_ID,
+                     "[c]")
+    )  %>% rename(
+    DailyEMO_sad = 
+      `Since the last prompt, please indicate the extent to which you felt sad`,
+    DailyEMO_annoyedorangry = 
+      `Since the last prompt, please indicate the extent to which you felt annoyed/angry`,
+    DailyEMO_grouchyorcranky =
+      `Since the last prompt, please indicate the extent to which you felt grouchy/cranky`,
+    DailyEMO_worried =
+      `Since the last prompt, please indicate the extent to which you felt worried`,
+    DailyEMO_anxious =
+      `Since the last prompt, please indicate the extent to which you felt anxious`,
+    DailyEMO_happy =
+      `Since the last prompt, please indicate the extent to which you felt happy`,
+    DailyEMO_cheerful =
+      `Since the last prompt, please indicate the extent to which you felt cheerful`,
+    DailyEMO_excited =
+    `Since the last prompt, please indicate the extent to which you felt excited`,
+    DailyEMO_energetic =
+      `Since the last prompt, please indicate the extent to which you felt energetic`,
+    DailyEMO_bored =
+      `Since the last prompt, please indicate the extent to which you felt bored`,
+    DailyEMO_want_other_people =
+      `Since the last prompt, please indicate the extent to which you want to be with other people`,
+    DailyEMO_want_alone =
+      `Since the last prompt, please indicate the extent to which you want to be alone`,
+    DailyEMO_who_are_you_with =
+      `Right now, who are you with?`,
+    DailyEMO_facetoface_YesorNo =
+      `Right now, are you having a face-to-face conversation?`,
+    DailyEMO_digital_convo_YesorNo =
+      `Right now, are you having a real-time digital (phone, text, Facebook, video) conversation?`
+  ) %>%
+  mutate(
+    user_id = as.factor(user_id)
+  )
+```
+
+### parsing dates
+```{r parsing dates}
+
+mw_mood_c_clean_date <-
+  mw_mood_clean %>%
+  mutate(
+    emo_trigger_date =
+      ifelse(
+        (ELS_ID == "102" &
+          is.na(emo_trigger_date)),
+        emo_survey_submit_date,
+        emo_trigger_date
+      ),
+    emo_trigger_recode = 
+      ifelse(
+        (ELS_ID == "102" & 
+          is.na(emo_trigger_recode)),
+        "Morning",
+        emo_trigger_recode
+      )
+    ) %>%
+  mutate(
+    emo_trigger_date = dmy(emo_trigger_date),
+    emo_trigger_recode = factor(emo_trigger_recode)
+  ) %>%
+  mutate(
+    neg_total =
+      dplyr::select(., 
+                    DailyEMO_sad,
+                    DailyEMO_annoyedorangry,
+                    DailyEMO_grouchyorcranky,
+                    DailyEMO_worried,
+                    DailyEMO_anxious,
+                    DailyEMO_bored,
+                    DailyEMO_want_alone) %>%
+      rowMeans(na.rm = TRUE),
+    pos_total =
+      dplyr::select(., 
+                    DailyEMO_happy,
+                    DailyEMO_cheerful,
+                    DailyEMO_excited,
+                    DailyEMO_energetic,
+                    DailyEMO_want_other_people
+                    ) %>%
+      rowMeans(na.rm = TRUE)
+  ) %>%
+  mutate(
+    ELS_ID = as.numeric(ELS_ID),
+    ELS_ID = factor(ELS_ID)
+  ) %>%
+  rename(
+    mw_start_date = emo_survey_start_date,
+    triggerdate = emo_trigger_date
+  ) %>%
+  mutate(
+    mw_start_date = dmy(mw_start_date)
+  ) %>%
+  dplyr::select(-email, -emo_survey_start_time, -emo_survey_submit_date, -emo_survey_submit_time)
+```
+
+## dealing with not enough or missing data  
+
+if there are fewer than 3 days of data, I'm removing the subject
+```{r not enough data}
+# how many days per individual?
+ema <-
+  mw_mood_c_clean_date %>%
+  group_by(ELS_ID) %>%
+  mutate(
+    day = day(triggerdate),
+    wday = wday(triggerdate, label = TRUE),
+    ELS_ID = factor(ELS_ID),
+    week =
+      ifelse(
+        wday == "Sun" |
+          wday == "Sat",
+        "wkend",
+        "wkday"
+        ),
+    dayorder = order(day),
+    data_num_obs = max(dayorder),
+    day_id = time_variable(triggerdate, .method = "day")
+  )
+
+## how many subjects are we starting out with?
+sum_N <-
+  ema %>%
+  group_by(ELS_ID) %>%
+  summarise(
+    n = n()
+  ) # starting off with 136
+
+## how many subjects can we analyze?
+sum_N_tod <-
+  ema %>%
+  group_by(ELS_ID, emo_trigger_recode) %>%
+  summarise(
+    n_per_tod = n()
+  ) 
+
+### merging back with ema
+emamerge <-
+  left_join(
+    ema,
+    sum_N_tod,
+    by = c("ELS_ID", "emo_trigger_recode")
+  ) %>%
+  mutate(
+    fewerthan3 =
+      ifelse(
+        n_per_tod < 3,
+        "yes",
+        NA
+        )
+    ) %>%
+  filter(is.na(fewerthan3))
+
+emamerge %>%
+  distinct(ELS_ID) # 136
+
+# filter those who have more than 3 days
+ema_filter  <-
+  emamerge %>%
+  group_by(ELS_ID) %>%
+  filter(
+    data_num_obs > 9
+  ) %>%
+  filter(
+    data_num_obs < 43 # no one had more than 15 days
+  ) %>%
+  dplyr::select(-user_id) %>%
+  ungroup()
+
+ema_filter %>%
+  distinct(ELS_ID) # 131
+```
+
+```{r}
+ema_filter_mat <-
+  ema_filter %>%
+  dplyr::select(
+    DailyEMO_sad,
+    DailyEMO_annoyedorangry,
+    DailyEMO_grouchyorcranky,
+    DailyEMO_worried,
+    DailyEMO_anxious,
+    DailyEMO_bored,
+    DailyEMO_want_alone,
+    DailyEMO_happy,
+    DailyEMO_cheerful,
+    DailyEMO_excited,
+    DailyEMO_energetic,
+    DailyEMO_want_other_people
+    ) %>%
+  rename(
+    sad = DailyEMO_sad,
+    annoyed.angry = DailyEMO_annoyedorangry,
+    grouchy.cranky = DailyEMO_grouchyorcranky,
+    worried = DailyEMO_worried,
+    anxious = DailyEMO_anxious,
+    bored = DailyEMO_bored,
+    want.alone = DailyEMO_want_alone,
+    happy = DailyEMO_happy,
+    cheerful = DailyEMO_cheerful,
+    excited = DailyEMO_excited,
+    energetic = DailyEMO_energetic,
+    want.others = DailyEMO_want_other_people    
+    ) %>%
+  corrr::correlate() %>%
+  corrr::shave(upper = FALSE)
+ema_filter_mat
+
+ema_filter_mat_long <-
+  ema_filter_mat %>%
+  pivot_longer(
+    cols = -term,
+    names_to = "colname",
+    values_to = "corr"
+  ) %>%
+  mutate(
+    rowname = fct_inorder(term),
+    colname = fct_inorder(colname)
+  )
+ema_filter_mat_long
+
+# plotting correlations
+corrmood <- 
+  ema_filter_mat_long %>%
+  ggplot(
+    aes(
+      x = rowname,
+      y = fct_rev(colname),
+      fill = corr
+    )
+  ) +
+  geom_tile() +
+  geom_text(
+    aes(
+      label = round(corr, 2)
+      )
+    ) +
+  coord_fixed(expand = FALSE) +
+  scale_fill_distiller(
+    palette = "RdBu", 
+    na.value = "white",
+    direction = 1,
+    limits = c(-1,1)
+  ) +
+  labs(
+    x = "",
+    y = ""
+  ) +
+ theme(
+   axis.text = element_text(size = 10, angle = 30, hjust = 1)
+ )
+ggsave("corrplot_ema_mood.png", width = 7, height = 7)
+```
+
+# writing data
+```{r}
+write_csv(ema_filter, "MW_daily_emo_data_longform.csv")
+```
+
